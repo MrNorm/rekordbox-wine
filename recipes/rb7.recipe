@@ -1,0 +1,17 @@
+# rekordbox 7.2.17 — PRIMARY TARGET.
+# The version actually wanted. Needs no Wine-hiding shim: rekordbox 7 dropped
+# the detection path that broke 5.x/6.x (WineHQ 42497). Only line that writes
+# both legacy Device Library and OneLibrary to one stick (7.2.11+).
+# Two Garbage AppDB reports exist (7.2.8 on main, 7.2.14 on 11.8) — both on
+# Nvidia/AMD. No published result on an Intel iGPU at any version, ever.
+RB_VERSION=7.2.17
+# Supplied by hand from rekordbox.com (the download page is JS-driven).
+# Inner payload: Install_rekordbox_x64_7_2_17.exe, 659536536 bytes, dated 2026-07-07.
+RB_INSTALLER_FILE="Install_rekordbox_x64_7_2_17.zip"
+RB_INSTALLER_SHA256="518fb7d11d0484715420f410d29eb7b406d7c18cfee7bf68fb613321c8b8b181"
+RB_INSTALLER_URL=""
+WINE_BIN=wine
+WIN_VERSION=win11
+WINETRICKS_VERBS="corefonts"
+HIDE_WINE_EXPORTS=0
+WINE_DRIVER=x11

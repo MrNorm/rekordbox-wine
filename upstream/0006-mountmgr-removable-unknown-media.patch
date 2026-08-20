@@ -1,0 +1,62 @@
+Subject: [PATCH] mountmgr: a removable UDisks drive with unknown media is still
+ removable
+
+udisks2_add_device() asks UDisks for the drive's MediaCompatibility and maps it
+to a device type. For a plain USB mass-storage stick that property is empty, so
+the type stays DEVICE_UNKNOWN -- and the drive is then added as a DOS device of
+unknown type even though UDisks has just told us, separately, that it is
+removable.
+
+The result is that GetDriveTypeW() does not return DRIVE_REMOVABLE for an
+ordinary USB stick. Applications that list removable drives therefore never see
+it. Measured with rekordbox 7.2.18, whose USB export browser lists only
+removable drives: a FAT32 stick was reported as
+
+    E: FIXED  label "REKORDBOX"  fs "NTFS"
+
+and with this patch as
+
+    E: REMOVABLE  label "REKORDBOX"  fs "FAT32"
+
+(The filesystem was misreported as well, but for a different reason: mountmgr
+could not open /dev/sda1 to read it -- "get_volume_device_info Failed to open
+/dev/sda1, err 5" -- because the device node is root:disk 0660. That is a
+packaging matter, not a Wine one.)
+
+device.c already maps DEVICE_HARDDISK to DRIVE_REMOVABLE, so this only makes the
+UDisks path agree with the type table that is already there. Windows reports a
+USB stick as DRIVE_REMOVABLE.
+
+---
+--- a/dlls/mountmgr.sys/dbus.c
++++ b/dlls/mountmgr.sys/dbus.c
+@@ -440,7 +440,28 @@
+     }
+     if (device)
+     {
+-        if (removable) queue_device_op( ADD_DOS_DEVICE, udi, device, mount_point, drive_type, guid_ptr, id, label, NULL );
++        if (removable)
++        {
++            /* RBW-REMOVABLE: UDisks has told us the drive is removable. If it
++             * could not also tell us what media it takes -- which is the normal
++             * case for a plain USB mass-storage stick, where
++             * MediaCompatibility is empty -- we were leaving the type as
++             * DEVICE_UNKNOWN, and the application then saw a drive that was not
++             * DRIVE_REMOVABLE. Windows reports a USB stick as DRIVE_REMOVABLE,
++             * and device.c already maps DEVICE_HARDDISK to exactly that, so a
++             * drive UDisks calls removable should be one.
++             *
++             * Measured with rekordbox 7.2.18: its USB export browser lists only
++             * removable drives, so a FAT32 stick that Wine reported as
++             * DRIVE_FIXED never appeared and export was untestable. */
++            if (drive_type == DEVICE_UNKNOWN)
++            {
++                TRACE( "RBW-REMOVABLE %s: removable with unknown media, treating as removable disk\n",
++                       debugstr_a(device) );
++                drive_type = DEVICE_HARDDISK;
++            }
++            queue_device_op( ADD_DOS_DEVICE, udi, device, mount_point, drive_type, guid_ptr, id, label, NULL );
++        }
+         else if (guid_ptr) queue_device_op( ADD_VOLUME, udi, device, mount_point, DEVICE_HARDDISK_VOL, guid_ptr, id, label, NULL );
+     }
+ }

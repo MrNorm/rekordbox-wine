@@ -1,0 +1,10 @@
+# rekordbox 6.8.7 — the reproducible target. One point release from the only
+# Silver result ever recorded (6.8.4 on wine-staging 9.8). Frozen and archived,
+# so it cannot move under us. 6.x DOES need the Wine-hiding shim.
+RB_VERSION=6.8.7
+RB_INSTALLER_URL="https://cdn.rekordbox.com/files/20260727162338/Install_rekordbox_x64_6_8_7.zip"
+WINE_BIN=wine
+WIN_VERSION=win11
+WINETRICKS_VERBS="corefonts"
+HIDE_WINE_EXPORTS=1
+WINE_DRIVER=x11

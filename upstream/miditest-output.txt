@@ -1,0 +1,11 @@
+# miditest transcript — Wine audio driver = alsa
+MIDI OUT devices: 4
+  [0] PipeWire-System - input
+  [1] PipeWire-RT-Event - input
+  [2] Midi Through Port-0
+  [3] DDJ-400 - DDJ-400 MIDI 1
+MIDI IN devices : 4
+  [0] PipeWire-System - input
+  [1] PipeWire-RT-Event - input
+  [2] Midi Through Port-0
+  [3] DDJ-400 - DDJ-400 MIDI 1

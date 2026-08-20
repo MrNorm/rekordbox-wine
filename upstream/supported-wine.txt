@@ -1,0 +1,15 @@
+# Wine versions this patch series is known to apply to and has been measured on.
+# One version per line. Lines starting with # are ignored.
+#
+# The series is NOT version-agnostic. It patches internals of winealsa.drv,
+# winex11.drv, mountmgr.sys, setupapi and dxgi; upstream moves that code, and a
+# patch that no longer applies is the good case. The bad case is a patch that
+# applies with fuzz to a function whose surrounding logic has changed.
+#
+# bin/build-patched-dlls.sh refuses an unlisted version unless
+# RBW_ALLOW_UNTESTED_WINE=1 is set. That is deliberately a speed bump, not a
+# wall: trying a new Wine is exactly how this list grows. If it works, add the
+# version here with the evidence, and say what you ran.
+#
+# version   status
+11.15       measured: every capability in GOLD-STATUS.md, wine-staging on Arch

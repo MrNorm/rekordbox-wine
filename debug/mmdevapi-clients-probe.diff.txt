@@ -1,0 +1,191 @@
+RBW-CLIENTS — per-client WASAPI accounting. DEBUG ONLY, not shipping.
+
+Against dlls/mmdevapi/client.c in the wine-11.15 build tree (which already
+carries the shipping 0002 patch and the phase-24b RBW-DESC probes).
+
+WHY IT EXISTS. Every earlier probe counted per process, or keyed its lines on a
+client POINTER, so "both clients are silent" could not be told from "one client
+is silent and the other is not being written to at all". This one is labelled
+with the device name and counts, per client, once a second:
+
+    GetCurrentPadding calls and the last padding value   what the app is TOLD
+    GetBuffer ok / fail, the failing HRESULT, max frames what the app ASKS
+    ReleaseBuffer calls, frames, SILENT flags, all-zero  what the app WRITES
+
+WHAT IT MEASURED (2026-08-17, phase 25f) — the numbers are in T03.
+
+BUILD AND INSTALL (prefix-local, reversible in one command):
+
+    cd ~/.cache/rbw-wine-build/wine-11.15
+    patch -p0 < debug/mmdevapi-clients-probe.diff.txt      # or re-apply by hand
+    make dlls/mmdevapi/x86_64-windows/mmdevapi.dll
+    python3 -c "p='dlls/mmdevapi/x86_64-windows/mmdevapi.dll'; d=open(p,'rb').read(); \
+                open('/tmp/dbg.dll','wb').write(d.replace(b'Wine builtin DLL', b'rbw patched dll '))"
+    cp /tmp/dbg.dll prefixes/rb7/drive_c/windows/system32/mmdevapi.dll
+
+    # restore the shipping DLL afterwards — THIS IS NOT OPTIONAL:
+    cp artifacts/mmdevapi-patched-native-11.15.dll \
+       prefixes/rb7/drive_c/windows/system32/mmdevapi.dll
+
+A FAULT THIS PROBE HAD, fixed in the version below. The slot stored a POINTER to
+the client's device_name. rekordbox destroys its clients every 15.8 s, so after
+the first rebuild every line printed freed memory: `dev=????ult`. The data was
+still readable by other means, but a probe that mislabels its rows is one step
+from a wrong attribution. The name is now copied into the slot.
+
+----8<---- diff ----8<----
+--- /tmp/client.c.before-rbwclients	2026-08-17 18:13:46.235266643 +0100
++++ dlls/mmdevapi/client.c	2026-08-17 18:27:56.177899312 +0100
+@@ -795,6 +795,85 @@
+     return params.result;
+ }
+ 
++/* RBW-CLIENTS: DEBUG ONLY, not part of the shipping series.
++ *
++ * Phase 25 pinned rekordbox's audio fault to having a SECOND output stream: the
++ * engine drops from 1.00x to 0.05x real time and completes a constant ~9 buffers
++ * a second whatever their size, as though a queue fills and is only emptied by a
++ * stream rebuild. Every earlier probe counted per PROCESS or keyed lines on a
++ * client pointer, so "both clients are silent" could never be told from "one
++ * client is silent and the other is not being written to at all".
++ *
++ * This one is keyed on the client and LABELLED WITH THE DEVICE NAME, and it
++ * counts the three things that decide who is starving whom:
++ *   - GetCurrentPadding calls and the last padding value  (what the app is told)
++ *   - GetBuffer successes and failures, with the failing HRESULT and the largest
++ *     frame count asked for                                (what the app asks)
++ *   - ReleaseBuffer calls, frames, SILENT flags, and whether the bytes written
++ *     were all zero                                        (what the app writes)
++ *
++ * One ERR line per client per second. Counting, not tracing: a +mmdevapi trace
++ * on this application emits 200,000 lines a second and throttles the process
++ * through its own logging, which changes the timing of the fault being measured.
++ */
++#define RBW_CSLOTS 32
++struct rbw_client_stat {
++    void *client;
++    char name[64];   /* COPIED, not pointed at: the client owns device_name and
++                      * frees it on teardown, and a slot that outlives the client
++                      * then prints freed memory — every line after the first
++                      * rebuild came out as garbage before this was fixed. */
++    unsigned pad_calls, pad_last;
++    unsigned gb_ok, gb_fail, gb_askmax;
++    unsigned rb_calls, rb_silent, rb_nonzero;
++    UINT64 rb_frames;
++    BYTE *buf; UINT32 buf_frames;
++    unsigned last_hr;
++    DWORD last;
++};
++static struct rbw_client_stat rbw_cstats[RBW_CSLOTS];
++
++/* rekordbox destroys and recreates its clients every ~15 s. A fixed table
++ * without recycling fills with dead pointers and goes silent exactly when the
++ * interesting behaviour starts — that fault has already been paid for once in
++ * this file's history. Recycle the least recently used slot. */
++static struct rbw_client_stat *rbw_slot(void *client, const char *name)
++{
++    DWORD now = GetTickCount();
++    int i, oldest = 0;
++
++    for (i = 0; i < RBW_CSLOTS; i++)
++        if (rbw_cstats[i].client == client) return &rbw_cstats[i];
++    for (i = 0; i < RBW_CSLOTS; i++) {
++        if (!rbw_cstats[i].client) { oldest = i; break; }
++        if (rbw_cstats[i].last < rbw_cstats[oldest].last) oldest = i;
++    }
++    memset(&rbw_cstats[oldest], 0, sizeof(rbw_cstats[oldest]));
++    rbw_cstats[oldest].client = client;
++    if (name) { unsigned k; for (k = 0; k < sizeof(rbw_cstats[oldest].name) - 1 && name[k]; k++)
++                    rbw_cstats[oldest].name[k] = name[k]; }
++    rbw_cstats[oldest].last = now;
++    return &rbw_cstats[oldest];
++}
++
++static void rbw_report(struct rbw_client_stat *st)
++{
++    DWORD now = GetTickCount();
++
++    if (now - st->last < 1000) return;
++    ERR("RBW-CLIENTS dev=%s client=%p | pad %u calls last=%u | GetBuffer ok=%u fail=%u "
++        "hr=%08x askmax=%u | Release %u calls %u frames silent=%u nonzero=%u  (%s)\n",
++        st->name[0] ? st->name : "?", st->client, st->pad_calls, st->pad_last,
++        st->gb_ok, st->gb_fail, st->last_hr, st->gb_askmax,
++        st->rb_calls, (unsigned)st->rb_frames, st->rb_silent, st->rb_nonzero,
++        st->rb_calls == 0 ? "NOT WRITTEN TO AT ALL" :
++        st->rb_nonzero == 0 ? "all zeros" :
++        st->rb_nonzero == st->rb_calls ? "signal in every buffer" : "partly silent");
++    st->pad_calls = 0; st->gb_ok = 0; st->gb_fail = 0; st->gb_askmax = 0;
++    st->rb_calls = 0; st->rb_silent = 0; st->rb_nonzero = 0; st->rb_frames = 0;
++    st->last = now;
++}
++
+ static HRESULT WINAPI client_GetCurrentPadding(IAudioClient3 *iface, UINT32 *out)
+ {
+     struct audio_client *This = impl_from_IAudioClient3(iface);
+@@ -813,6 +892,13 @@
+ 
+     wine_unix_call(get_current_padding, &params);
+ 
++    {
++        struct rbw_client_stat *rbw = rbw_slot(This, This->device_name);
++        rbw->pad_calls++;
++        rbw->pad_last = *out;
++        rbw_report(rbw);
++    }
++
+     return params.result;
+ }
+ 
+@@ -1471,8 +1557,10 @@
+     return IAudioClient3_Release(&This->IAudioClient3_iface);
+ }
+ 
++
+ static HRESULT WINAPI render_GetBuffer(IAudioRenderClient *iface, UINT32 frames, BYTE **data)
+ {
++    struct rbw_client_stat *rbw;
+     struct audio_client *This = impl_from_IAudioRenderClient(iface);
+     struct get_render_buffer_params params;
+ 
+@@ -1492,6 +1580,12 @@
+ 
+     wine_unix_call(get_render_buffer, &params);
+ 
++    rbw = rbw_slot(This, This->device_name);
++    if (FAILED(params.result)) { rbw->gb_fail++; rbw->last_hr = (unsigned)params.result; }
++    else { rbw->gb_ok++; rbw->buf = *data; rbw->buf_frames = frames; }
++    if (frames > rbw->gb_askmax) rbw->gb_askmax = frames;
++    rbw_report(rbw);
++
+     return params.result;
+ }
+ 
+@@ -1500,6 +1594,7 @@
+ {
+     struct audio_client *This = impl_from_IAudioRenderClient(iface);
+     struct release_render_buffer_params params;
++    struct rbw_client_stat *rbw;
+ 
+     TRACE("(%p)->(%u, %lx)\n", This, written_frames, flags);
+ 
+@@ -1510,6 +1605,20 @@
+     params.written_frames = written_frames;
+     params.flags          = flags;
+ 
++    rbw = rbw_slot(This, This->device_name);
++    rbw->rb_calls++;
++    rbw->rb_frames += written_frames;
++    if (flags & AUDCLNT_BUFFERFLAGS_SILENT) rbw->rb_silent++;
++    /* "No SILENT flag" is not the same as "contains signal": an application can
++     * write real zeros without flagging them. Look at the bytes. */
++    if (rbw->buf && written_frames) {
++        UINT32 bytes = written_frames * 4, j;
++        if (bytes > 4096) bytes = 4096;
++        for (j = 0; j < bytes; j++)
++            if (rbw->buf[j]) { rbw->rb_nonzero++; break; }
++    }
++    rbw->buf = NULL;
++
+     wine_unix_call(release_render_buffer, &params);
+ 
+     return params.result;

@@ -1,0 +1,29 @@
+#!/usr/bin/make -f
+# Wine cannot be built with link-time optimisation: LTO drops the symbols that
+# ntdll's hand-written syscall dispatcher references from assembly and the build
+# dies with "undefined reference to init_syscall_frame".
+export DEB_BUILD_MAINT_OPTIONS = optimize=-lto
+# Build the Wine components inside the build tree, never in a developer's
+# ~/.cache, which carries diagnostic code on top of the patch series.
+export RBW_WINE_BUILD = $(CURDIR)/debian/wine-build
+
+%:
+	dh $@
+
+# RBW_SKIP_WINE_BUILD=1 packages the existing marker-verified artifacts/ rather
+# than recompiling Wine once per package format. dh_auto_test still checks them.
+override_dh_auto_build:
+	if [ "$$RBW_SKIP_WINE_BUILD" = 1 ]; then \
+	  echo "RBW_SKIP_WINE_BUILD=1: reusing artifacts/"; \
+	else \
+	  ./bin/build-patched-dlls.sh; \
+	fi
+
+override_dh_auto_install:
+	packaging/install-tree.sh debian/rekordbox-wine
+
+# The payload is prebuilt Wine libraries for a specific Wine version; dh_strip
+# and the shlib scanner have no useful opinion about PE files.
+override_dh_strip:
+override_dh_shlibdeps:
+override_dh_dwz:

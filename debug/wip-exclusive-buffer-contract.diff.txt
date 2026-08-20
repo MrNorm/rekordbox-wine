@@ -1,0 +1,214 @@
+WORK IN PROGRESS — exclusive-mode buffer contract. NOT shipping.
+
+Against dlls/winealsa.drv/alsa.c as of the 0003 shipping patch. Contains three
+substantive changes plus the debug probes that measured them:
+
+  1. alsa_get_render_buffer judges free space by what is still in the mmdevapi
+     ring (data_not_in_alsa) rather than held_frames, which counts frames Wine
+     has already copied into ALSA.
+  2. The ring is allocated deeper than the buffer advertised to the client
+     (mmdev_bufsize_frames), so a full advertised buffer can actually be freed.
+  3. For EXCLUSIVE event-driven streams the advertised buffer is one period,
+     which is the contract Windows implements.
+
+Measured: AUDCLNT_E_BUFFER_TOO_LARGE went from ~158,000/second to zero,
+GetBuffer began succeeding ~385 times a second, and the audio actually reaching
+the DDJ went from 3.0 s in 45 s to 15 s in 40 s.
+
+NOT shipped because the stream is still rebuilt every ~7-8 s (no Wine-side error
+anywhere in the lifecycle) and because the single-device case — PC MASTER OUT
+off, which is how the machine is used day to day — has NOT been re-measured
+against it. Advertising 256 frames where the client asked for 1024 is a real
+semantic change and could regress that path.
+
+Debug probes included: RBW-TOOBIG (the refusal, with the numbers that decide
+it), RBW-GETOK (successes — a falling failure rate is not the same as a client
+being served), RBW-POS (reported play position; established that rekordbox never
+calls GetPosition at all, so the clock is NOT the rebuild trigger).
+
+----8<---- diff ----8<----
+--- alsa.c.pre-dbg	2026-08-17 12:33:02.870021044 +0100
++++ alsa.c	2026-08-17 13:19:16.966513089 +0100
+@@ -68,6 +68,7 @@
+     REFERENCE_TIME mmdev_period_rt;
+     UINT64 written_frames, last_pos_frames;
+     UINT32 bufsize_frames, held_frames, tmp_buffer_frames, mmdev_period_frames;
++    UINT32 mmdev_bufsize_frames; /* RBW-DBLBUF: what the client is told */
+     snd_pcm_uframes_t remapping_buf_frames;
+     UINT32 lcl_offs_frames; /* offs into local_buffer where valid data starts */
+     UINT32 wri_offs_frames; /* where to write fresh data in local_buffer */
+@@ -989,6 +990,34 @@
+     stream->bufsize_frames = muldiv(params->duration, params->fmt->nSamplesPerSec, 10000000);
+     if(params->share == AUDCLNT_SHAREMODE_EXCLUSIVE)
+         stream->bufsize_frames -= stream->bufsize_frames % stream->mmdev_period_frames;
++
++    /* RBW-DBLBUF: the ring must be DEEPER than the buffer we advertise.
++     *
++     * A client is entitled to call GetBuffer(GetBufferSize()) and write a whole
++     * buffer at once -- and in exclusive event-driven mode that is the normal
++     * pattern. With one ring sized exactly to the advertised buffer that can
++     * never be satisfied, because the ring always holds frames that have not
++     * been played yet. rekordbox asked for 1024 and was refused ~158,000 times
++     * a second while the ring held a few hundred frames, then rebuilt the
++     * stream every 15 s.
++     *
++     * Advertise what the client asked for; allocate twice that so a full
++     * buffer's worth of space is available while ALSA drains the rest. This is
++     * the double buffering the exclusive-mode contract assumes. */
++    stream->mmdev_bufsize_frames = stream->bufsize_frames;
++    if(params->share == AUDCLNT_SHAREMODE_EXCLUSIVE && stream->bufsize_frames){
++        /* In exclusive event-driven mode Windows hands the client a buffer of
++         * exactly one period and expects a whole buffer per event. Advertising
++         * the full requested duration instead means the client asks for more
++         * than the ring can ever free at once. Advertise a period; keep the
++         * requested duration as the ring behind it. */
++        if(stream->mmdev_period_frames &&
++           stream->mmdev_period_frames < stream->mmdev_bufsize_frames)
++            stream->mmdev_bufsize_frames = stream->mmdev_period_frames;
++    }
++    if(params->share == AUDCLNT_SHAREMODE_EXCLUSIVE)
++        ERR("RBW-DBLBUF exclusive: advertising %u frames, ring %u, period %u\n",
++            stream->mmdev_bufsize_frames, stream->bufsize_frames, stream->mmdev_period_frames);
+     stream->hidden_frames = stream->alsa_period_frames + stream->mmdev_period_frames +
+         muldiv(params->fmt->nSamplesPerSec, EXTRA_SAFE_RT, 10000000);
+     /* leave no less than about 1.33ms or 256 bytes of data after a rewind */
+@@ -1494,9 +1523,29 @@
+      * With 0010 in place the buffer is several periods deep, so this condition
+      * is true often enough to keep the client fed and rare enough not to melt
+      * the server. */
+-    if(stream->event &&
+-       stream->bufsize_frames - stream->held_frames >= stream->mmdev_period_frames)
+-        NtSetEvent(stream->event, NULL);
++    /* RBW-EVENT4: in EXCLUSIVE event-driven mode the client is entitled to write
++     * a whole buffer per event, and that is exactly what it does: rekordbox
++     * calls GetBuffer(GetBufferSize()). Signalling when merely one period is
++     * free therefore wakes it to be refused -- measured at ~158,000
++     * AUDCLNT_E_BUFFER_TOO_LARGE per second on a DDJ-400
++     * (asked=1024 held=759 bufsize=1024 period=256) -- and after 15 s of that
++     * the application gives up, tears both streams down and rebuilds them. That
++     * is the 15.7 s dropout cycle, and the reason the controller receives one
++     * second of audio and then silence.
++     *
++     * Shared mode keeps the old condition: its buffer is several periods deep,
++     * clients write a period at a time, and signalling per period is correct.
++     *
++     * The history here is a warning. 0003 gated on a full period, 0009 relaxed
++     * it to any space because the client starved, 0010 deepened the buffer and
++     * EVENT3 restored the period gate -- four changes, none of which asked what
++     * the client actually requests. */
++    if(stream->event){
++        UINT32 need = stream->share == AUDCLNT_SHAREMODE_EXCLUSIVE ?
++                      stream->bufsize_frames : stream->mmdev_period_frames;
++        if(stream->bufsize_frames - stream->held_frames >= need)
++            NtSetEvent(stream->event, NULL);
++    }
+ }
+ 
+ static void alsa_read_data(struct alsa_stream *stream)
+@@ -1750,9 +1799,37 @@
+     if(!frames)
+         return alsa_unlock_result(stream, &params->result, S_OK);
+ 
+-    /* held_frames == GetCurrentPadding_nolock(); */
+-    if(stream->held_frames + frames > stream->bufsize_frames)
++    /* RBW-PADDING: free space is what is still in OUR ring, not held_frames.
++     *
++     * held_frames counts everything not yet PLAYED, including frames Wine has
++     * already copied into ALSA's own buffer. Those no longer occupy the
++     * mmdevapi ring -- ALSA has its own copy -- but they were still being
++     * charged against it, so a client that asks for a whole buffer can never be
++     * satisfied. Measured on a DDJ-400 in exclusive mode:
++     *
++     *   asked=1024 held=759 bufsize=1024 ... in_alsa=759
++     *
++     * held == in_alsa on every sample, i.e. the ring was EMPTY and the request
++     * was refused anyway, ~158,000 times a second, until rekordbox gave up and
++     * rebuilt the stream. In shared mode the buffer is several periods deep so
++     * this almost never bites, which is why it survived this long. */
++    if(data_not_in_alsa(stream) + frames > stream->bufsize_frames)
++    {
++        /* RBW-TOOBIG: DEBUG ONLY. rekordbox is refused here ~158,000 times a
++         * second on the exclusive stream and gives up after 15 s. Print the
++         * three numbers that decide it, once a second. */
++        static time_t rbw_last;
++        time_t now = time(NULL);
++        if(now != rbw_last){
++            rbw_last = now;
++            ERR("RBW-TOOBIG asked=%u held=%u bufsize=%u alsa_period=%u mmdev_period=%u "
++                "in_alsa=%u started=%d\n",
++                frames, stream->held_frames, stream->bufsize_frames,
++                stream->alsa_period_frames, stream->mmdev_period_frames,
++                stream->data_in_alsa_frames, stream->started);
++        }
+         return alsa_unlock_result(stream, &params->result, AUDCLNT_E_BUFFER_TOO_LARGE);
++    }
+ 
+     write_pos = stream->wri_offs_frames;
+     if(write_pos + frames > stream->bufsize_frames){
+@@ -1779,6 +1856,16 @@
+ 
+     silence_buffer(stream, *params->data, frames);
+ 
++    {   /* RBW-GETOK: count successes. A falling failure rate is not the same as
++         * a client that is being served, and the two look identical if only
++         * failures are logged. */
++        static time_t ok_last; static unsigned ok_n;
++        time_t now = time(NULL);
++        ok_n++;
++        if(now != ok_last){ ok_last = now;
++            ERR("RBW-GETOK GetBuffer succeeded %u times in the last second (asked %u)\n", ok_n, frames);
++            ok_n = 0; }
++    }
+     return alsa_unlock_result(stream, &params->result, S_OK);
+ }
+ 
+@@ -2213,7 +2300,9 @@
+ 
+     alsa_lock(stream);
+ 
+-    *params->frames = stream->bufsize_frames;
++    /* RBW-DBLBUF: the advertised buffer, not the deeper ring behind it. */
++    *params->frames = stream->mmdev_bufsize_frames ?
++                      stream->mmdev_bufsize_frames : stream->bufsize_frames;
+ 
+     return alsa_unlock_result(stream, &params->result, S_OK);
+ }
+@@ -2247,7 +2336,12 @@
+     alsa_lock(stream);
+ 
+     /* padding is solely updated at callback time in shared mode */
+-    *params->padding = stream->held_frames;
++    /* RBW-PADDING: never report more padding than the buffer can hold; with the
++     * ALSA queue counted in, held_frames can exceed bufsize once the client is
++     * allowed to refill a ring that ALSA has already drained from. */
++    *params->padding = min(stream->held_frames,
++                           stream->mmdev_bufsize_frames ?
++                           stream->mmdev_bufsize_frames : stream->bufsize_frames);
+ 
+     /* RBW-PAD: sampled, because a starved client polls this millions of times
+      * (measured: 6,963,363 calls against 20 GetBuffer calls in ~100s). Logging
+@@ -2332,6 +2426,24 @@
+     else
+         stream->last_pos_frames = position;
+ 
++    if(stream->flow == eRender)
++    {   /* RBW-POS: the stream still gets rebuilt every ~8 s with no failure
++         * anywhere in the lifecycle, so the next suspect is what we report as
++         * the play position: a client that thinks the clock has stalled will
++         * resync by rebuilding. Log the rate once a second. */
++        static time_t pos_last; static UINT64 pos_prev; static int pos_first = 1;
++        time_t now = time(NULL);
++        if(now != pos_last){
++            if(!pos_first)
++                ERR("RBW-POS advanced %lld frames in ~1s (expect ~%u)  pos=%lld "
++                    "written=%lld held=%u state=%d\n",
++                    (long long)(position - pos_prev), stream->fmt->nSamplesPerSec,
++                    (long long)position, (long long)stream->written_frames,
++                    stream->held_frames, (int)alsa_state);
++            pos_first = 0; pos_last = now; pos_prev = position;
++        }
++    }
++
+     TRACE("frames written: %u, held: %u, state: 0x%x, position: %u\n",
+             (UINT32)(stream->written_frames%1000000000), stream->held_frames,
+             alsa_state, (UINT32)(position%1000000000));

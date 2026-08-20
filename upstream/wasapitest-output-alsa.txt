@@ -1,0 +1,196 @@
+# wasapitest transcript — Wine audio driver = alsa
+# wine-staging 11.15, 2026-08-13T09:40:31Z, Pioneer DDJ-400 attached
+
+render endpoints: 7
+
+[0] Speakers (Out: sof-hda-dsp - )
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    HRESULTs seen   : 0x00000000(S_OK)
+
+    verdict: 48 exclusive formats accepted — a rate list can be built.
+
+[1] Speakers (Out: sof-hda-dsp - HDMI 3)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    HRESULTs seen   : 0x00000000(S_OK)
+
+    verdict: 48 exclusive formats accepted — a rate list can be built.
+
+[2] Speakers (Out: sof-hda-dsp - HDMI 2)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    HRESULTs seen   : 0x00000000(S_OK)
+
+    verdict: 48 exclusive formats accepted — a rate list can be built.
+
+[3] Speakers (Out: sof-hda-dsp - )
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    HRESULTs seen   : 0x00000000(S_OK)
+
+    verdict: 48 exclusive formats accepted — a rate list can be built.
+
+[4] Speakers (Out: sof-hda-dsp - HDMI 1)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    HRESULTs seen   : 0x00000000(S_OK)
+
+    verdict: 48 exclusive formats accepted — a rate list can be built.
+
+[5] Speakers (Out: default)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    HRESULTs seen   : 0x00000000(S_OK)
+
+    verdict: 48 exclusive formats accepted — a rate list can be built.
+
+[6] Speakers (Out: DDJ-400 - USB Audio)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  ok  ok  ok  ok 
+       48000  ok  ok  ok  ok 
+       88200  ok  ok  ok  ok 
+       96000  ok  ok  ok  ok 
+      176400  ok  ok  ok  ok 
+      192000  ok  ok  ok  ok 
+
+    HRESULTs seen   : 0x00000000(S_OK)
+
+    verdict: 48 exclusive formats accepted — a rate list can be built.
+
+# --- exclusive stream, end to end ---
+render endpoints: 7
+
+playing a tone on [6] Speakers (Out: DDJ-400 - USB Audio)
+    device period   : default 100000 ns, min 50000 ns
+    Initialize excl : 0x00000000 S_OK   (44100 Hz, 4 ch, 32f)
+    buffer size     : 3528 frames
+    Start           : 0x00000000 S_OK
+    wrote           : 66150 frames — you should have heard a 440 Hz tone

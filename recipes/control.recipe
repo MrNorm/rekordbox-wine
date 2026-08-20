@@ -1,0 +1,9 @@
+# Positive control. No rekordbox — runs Wine's own bundled winecfg/notepad
+# through the identical harness path to prove the oracle can return window-ok
+# and to measure a real BLANK_STDDEV floor. Deliberately minimal: no winetricks,
+# no shims, nothing that could itself fail.
+WINE_BIN=wine
+WIN_VERSION=win11
+WINETRICKS_VERBS=""
+HIDE_WINE_EXPORTS=0
+WINE_DRIVER=x11

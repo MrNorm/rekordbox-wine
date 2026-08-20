@@ -1,0 +1,25 @@
+# Event-driven EXCLUSIVE mode — the call rekordbox makes, both ways round.
+# wine-staging 11.15, Wine audio driver = alsa, Pioneer DDJ-400 attached.
+# 2026-08-13T10:03:28Z
+
+## CONTROL — stock builtin mmdevapi
+render endpoints: 7
+
+[6] Speakers (Out: DDJ-400 - USB Audio)
+    Initialize excl+event : 0x8889000a DEVICE_IN_USE   (44100 Hz, 4 ch, 32f, period 5805 us)
+    -> this is the call rekordbox makes. Stock Wine returns
+       AUDCLNT_E_DEVICE_IN_USE here from adjust_timing(), with no
+       device actually in use.
+
+## PATCHED — mmdevapi with 0002-mmdevapi-allow-event-driven-exclusive-streams.patch
+render endpoints: 7
+
+[6] Speakers (Out: DDJ-400 - USB Audio)
+    Initialize excl+event : 0x00000000 S_OK   (44100 Hz, 4 ch, 32f, period 5805 us)
+    SetEventHandle        : 0x00000000 S_OK
+    buffer size           : 256 frames (one period, as it should be)
+    pre-filled one period of silence
+    Start                 : 0x00000000 S_OK
+    GetBuffer(256) failed after 1 periods: 0x88890006 BUFFER_TOO_LARGE (padding 256)
+    periods serviced      : 1
+    VERDICT: the event fires, but the buffer never comes free.

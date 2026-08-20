@@ -1,0 +1,30 @@
+Source: rekordbox-wine
+Section: sound
+Priority: optional
+Maintainer: rekordbox-wine maintainers <nobody@example.invalid>
+Build-Depends: debhelper-compat (= 13), clang, lld, python3, curl, flex, bison,
+ libx11-dev, libxext-dev, libxrandr-dev, libxcomposite-dev, libxfixes-dev,
+ libxi-dev, libxcursor-dev, libasound2-dev, libdbus-1-dev, libfreetype-dev,
+ libgnutls28-dev, libusb-1.0-0-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/REPLACE-ME/rekordbox-wine
+
+Package: rekordbox-wine
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, wine (>= 11.0) | wine-staging (>= 11.0),
+ libasound2t64 | libasound2, alsa-utils, python3
+Recommends: rtkit
+Suggests: pipewire-alsa, wine-mono, wine-gecko
+Description: Wine fixes and launcher for running rekordbox 7.2.x with a DDJ-400
+ Patched Wine components and a launcher that verifies every one of them before
+ starting rekordbox. This package does NOT contain rekordbox itself, which is
+ proprietary and must be downloaded from rekordbox.com.
+ .
+ Ten Wine defects are fixed, without which the application paints a single frame
+ and freezes, has no working audio device, cannot open its File menu, cannot see
+ a USB stick, and rejects the controller it has just detected.
+ .
+ Four of the fixes are unix-side Wine libraries that cannot be overridden from
+ inside a prefix. They are installed to /usr/share/rekordbox-wine/winedll and
+ applied by a separate script, because overwriting files owned by the wine
+ package would be a file conflict and would be undone by every wine upgrade.

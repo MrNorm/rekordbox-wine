@@ -1,0 +1,282 @@
+{
+  "_comment": [
+    "Named UI regions for bin/uiassert.py, as fractions of the rekordbox window.",
+    "Fractional so they survive a resize; calibrated against",
+    "runs/CALIB/main.png (2050x1164) on 2026-08-14 in PERFORMANCE view.",
+    "",
+    "STATE SEMANTICS:",
+    "  greyed = control disabled. Dark grey glyphs, low peak brightness.",
+    "  active = control enabled. Bright glyphs, high peak brightness.",
+    "",
+    "The MIDI indicator and the MIX/LEVEL controls are the user-confirmed",
+    "tells for 'the controller is bound'. They are greyed in the baseline and",
+    "must go active on success. That is the milestone this whole project is",
+    "chasing, so it is asserted rather than eyeballed.",
+    "",
+    "Thresholds are NOT absolute. uiassert.py calibrates per-screenshot against",
+    "the reference regions below, because rekordbox's skin, the compositor and",
+    "the display profile all shift absolute levels. A fixed number would rot."
+  ],
+
+  "reference": {
+    "_comment": "Known-state regions used to calibrate the active/greyed split.",
+    "bright_text": {
+      "_comment": "The 'File' menu label. Always enabled, always bright.",
+      "x": 0.0366, "y": 0.0713, "w": 0.0180, "h": 0.0180,
+      "state": "active"
+    },
+    "dark_background": {
+      "_comment": "Empty panel below the library. Always dark, never has glyphs.",
+      "x": 0.3000, "y": 0.8200, "w": 0.1000, "h": 0.0500,
+      "state": "dark"
+    }
+  },
+
+  "regions": {
+    "midi_indicator": {
+      "_comment": "'MIDI' top right. THE milestone tell: not greyed == controller bound.",
+      "x": 0.7449, "y": 0.0966, "w": 0.0122, "h": 0.0086,
+      "baseline": "greyed",
+      "milestone": "active"
+    },
+    "pad_indicator": {
+      "_comment": "'PAD', immediately left of MIDI. Same enable path.",
+      "x": 0.7263, "y": 0.0966, "w": 0.0107, "h": 0.0086,
+      "baseline": "greyed",
+      "milestone": "active"
+    },
+    "mix_control": {
+      "_comment": "'MIX' label + knob, above the library panel.",
+      "x": 0.3659, "y": 0.4407, "w": 0.0185, "h": 0.0163,
+      "baseline": "greyed",
+      "milestone": "active"
+    },
+    "level_control": {
+      "_comment": "'LEVEL' label + knob, right of MIX.",
+      "x": 0.3976, "y": 0.4407, "w": 0.0259, "h": 0.0163,
+      "baseline": "greyed",
+      "milestone": "active"
+    }
+  },
+
+  "anchors": {
+    "_comment": [
+      "Click targets for the MAIN window.",
+      "FRAME WARNING, measured 2026-08-14: despite the header comment above,",
+      "these are fractions of the SPECTACLE SCREENSHOT (2050x1164), not of the",
+      "X window (1920x1006 at +0+28). `spectacle -a` captures the active window",
+      "plus KWin's drop shadow, so the window sits inset at +65+53 inside the",
+      "PNG. Verified with `magick ... -format %@` -> trimbox 1920x1034+65+53.",
+      "To turn one of these into a click, convert first:",
+      "    screen_x = frac_x*2050 - 65 ; screen_y = frac_y*1164 - 53",
+      "The audio_prefs block below deliberately does NOT inherit this frame --",
+      "see its own comment."
+    ],
+    "menu_file":        { "x": 0.0420, "y": 0.0770 },
+    "menu_view":        { "x": 0.0655, "y": 0.0770 },
+    "preferences_gear": { "x": 0.8405, "y": 0.0975 },
+    "library_first_row":{ "x": 0.3500, "y": 0.5230 }
+  },
+
+  "audio_prefs": {
+    "_comment": [
+      "Preferences -> Audio pane. Used by bin/audiotest.sh via",
+      "`bin/uiassert.py --block audio_prefs`.",
+      "",
+      "WHAT THIS IS FOR: the Sample Rate dropdown silently went empty once",
+      "already (T03) and nobody noticed for a session. A headless probe cannot",
+      "catch it -- upstream/wasapitest.exe reports 48/48 exclusive formats",
+      "accepted while the dropdown is still blank, because rekordbox builds the",
+      "rate list at device-selection time on a path wasapitest never walks. So",
+      "the check has to read the real widget.",
+      "",
+      "COORDINATE FRAME -- different from the main-window block above, on",
+      "purpose. The Preferences dialog is drawn with Wine's own titlebar and",
+      "gets NO KWin shadow, so `spectacle -a` returns exactly the X geometry:",
+      "806x824 at +557+110, PNG is 806x824, offset +0+0 (verified 2026-08-14,",
+      "trimbox == full frame). Fractions here are therefore fractions of the",
+      "dialog itself, and image px == window px == screen px + window origin.",
+      "Calibrated against runs/AUDIOTEST/03-audio.png (806x824).",
+      "",
+      "HOW 'POPULATED' IS DECIDED: the combo interior is pure black (measured",
+      "peak=0.000 mean=0.000 sd=0.000 when empty), so any glyph at all lifts",
+      "both peak and spread hard. uiassert's existing 'absent' rule -- peak <",
+      "dark+0.06 AND sd < 0.03 -- separates the two states with an enormous",
+      "margin, so no new classifier was needed:",
+      "    empty  (live, 2026-08-14)  peak=0.000 sd=0.000  -> absent",
+      "    populated (synthetic white) peak=1.000 sd=0.269  -> active",
+      "    populated (synthetic dim)   peak=0.471 sd=0.127  -> greyed",
+      "'greyed' still means glyphs are present, so audiotest.sh treats anything",
+      "that is not 'absent' as populated. Only 'absent' is the regression.",
+      "",
+      "OCR WAS NOT USED FOR THE VERDICT. tesseract is installed and audiotest.sh",
+      "prints what it reads as commentary, but T00 already recorded OCR silently",
+      "returning nothing, which here would look exactly like an empty dropdown --",
+      "i.e. it would fake the very bug we are hunting. Pixels decide."
+    ],
+
+    "reference": {
+      "_comment": [
+        "Both references live INSIDE the Audio pane, so the calibration is",
+        "immune to skin/compositor/display-profile drift and to the dialog",
+        "being partly occluded."
+      ],
+      "bright_text": {
+        "_comment": [
+          "The Audio Device combo's value text ('DDJ-400 WASAPI'). This is the",
+          "in-shot POSITIVE CONTROL and it is load-bearing: it is the same",
+          "widget class, same skin, same font and same 6px text inset as the",
+          "Sample Rate combo, but it is known-populated (the bug is that the",
+          "device list still works while the rate list does not). If the",
+          "detector cannot see text HERE, it cannot be trusted to have seen the",
+          "absence of text below, and audiotest.sh raises a harness fault",
+          "instead of reporting a failure. x=224 is 6px inside the combo's left",
+          "edge at 218; y=118..134 spans the 13px glyph box at 120..131."
+        ],
+        "x": 0.277916, "y": 0.143204, "w": 0.243176, "h": 0.019417,
+        "state": "active"
+      },
+      "dark_background": {
+        "_comment": [
+          "The RIGHT-HAND interior of the Sample Rate combo itself, x=430..630.",
+          "Deliberately the same widget and the same row as the region under",
+          "test rather than some other patch of panel: it is the combo's own",
+          "fill, so it tracks the combo's own background exactly. It stays",
+          "empty in both states -- a populated value reads '44100 Hz', ~70px,",
+          "which ends well before x=430 -- and the chevron sits at x~740, well",
+          "clear of the right edge at 630."
+        ],
+        "x": 0.533499, "y": 0.305825, "w": 0.248139, "h": 0.019417,
+        "state": "dark"
+      }
+    },
+
+    "regions": {
+      "sample_rate_value": {
+        "_comment": [
+          "THE REGION UNDER TEST. The Sample Rate combo's value text area.",
+          "Combo box is 218..757 x 249..271; this is x=224..420, y=252..268 --",
+          "6px in from the left edge, 3px in from top and bottom so the 1px",
+          "border never contributes. 196px wide is ~2.8x the width of the",
+          "longest plausible value ('192000 Hz'), so a value cannot escape the",
+          "window horizontally.",
+          "absent == the regression. active/greyed == list has content."
+        ],
+        "x": 0.277916, "y": 0.305825, "w": 0.243176, "h": 0.019417,
+        "healthy": "active"
+      },
+      "audio_device_value": {
+        "_comment": [
+          "Same box as reference.bright_text, graded as a region too so the",
+          "positive control appears in the report next to the region under",
+          "test. Reading these two side by side is the whole argument that a",
+          "FAIL is real and not a dead measurement."
+        ],
+        "x": 0.277916, "y": 0.143204, "w": 0.243176, "h": 0.019417,
+        "healthy": "active"
+      },
+      "audio_heading": {
+        "_comment": "The bold 'Audio' section heading, x=190..260 y=82..100. Present only on this pane.",
+        "x": 0.235732, "y": 0.099515, "w": 0.086849, "h": 0.021845,
+        "healthy": "active"
+      },
+      "sample_rate_heading": {
+        "_comment": [
+          "The bold 'Sample Rate' section heading, x=190..305 y=214..236.",
+          "NOT sufficient on its own as a pane check -- the View pane happens",
+          "to put a heading at the same y and it also reads 'active'. That is",
+          "why the sidebar-selection regions below exist."
+        ],
+        "x": 0.235732, "y": 0.259709, "w": 0.142680, "h": 0.026699,
+        "healthy": "active"
+      },
+
+      "sidebar_sel_plan": {
+        "_comment": [
+          "PANE GATE, rows 1-6 of the left sidebar. Each box is the 10px icon",
+          "gutter at x=6..16 for that row, i.e. left of the label glyphs, so it",
+          "samples the selection fill and nothing else. Measured 2026-08-14:",
+          "selected row mean=0.297 peak=0.518 (blue highlight), every",
+          "unselected row mean=0.118 peak=0.118 sd=0.000 (flat panel grey).",
+          "audiotest.sh requires sidebar_sel_audio to be the brightest of the",
+          "six by a clear margin before it will grade anything.",
+          "",
+          "WHY THIS IS NEEDED: on the View pane the Sample Rate combo's",
+          "coordinates land on flat panel (peak=0.118 sd=0.052), which is NOT",
+          "'absent' and would have been scored as populated. Without this gate",
+          "a mis-navigation would silently PASS -- the exact failure the test",
+          "exists to prevent. Row pitch is 33px from y=92 (PLAN)."
+        ],
+        "x": 0.007444, "y": 0.098301, "w": 0.012407, "h": 0.026699
+      },
+      "sidebar_sel_cloud":      { "x": 0.007444, "y": 0.138350, "w": 0.012407, "h": 0.026699 },
+      "sidebar_sel_view":       { "x": 0.007444, "y": 0.178398, "w": 0.012407, "h": 0.026699 },
+      "sidebar_sel_audio":      { "x": 0.007444, "y": 0.218447, "w": 0.012407, "h": 0.026699 },
+      "sidebar_sel_analysis":   { "x": 0.007444, "y": 0.258495, "w": 0.012407, "h": 0.026699 },
+      "sidebar_sel_controller": { "x": 0.007444, "y": 0.297330, "w": 0.012407, "h": 0.026699 }
+    },
+
+    "anchors": {
+      "_comment": [
+        "Click targets, fractions of the PREFERENCES window (see frame note",
+        "above). screen_x = win_x + frac_x*win_w, screen_y = win_y + frac_y*win_h,",
+        "with win_* straight out of `xdotool getwindowgeometry`."
+      ],
+      "sidebar_audio":     { "_c": "centre of the 'Audio' sidebar row, (70,191)", "x": 0.086849, "y": 0.231796 },
+      "sidebar_view":      { "_c": "'View' row, (70,158). Used only to prove the click mapping.", "x": 0.086849, "y": 0.191748 },
+      "tab_configuration": { "_c": "'Configuration' tab, (206,40). The Audio pane lives under it.", "x": 0.255583, "y": 0.048544 },
+      "sample_rate_combo": { "_c": "centre of the Sample Rate combo, (400,260).", "x": 0.496278, "y": 0.315534 }
+    },
+
+    "close": {
+      "_comment": [
+        "THE ONLY SAFE WAY TO CLOSE THIS DIALOG. Click its titlebar X, which",
+        "Wine draws 12px in from the right edge and 11px down -- px, not a",
+        "fraction, because it is a fixed-size titlebar glyph.",
+        "",
+        "DO NOT USE alt+F4. Measured 2026-08-14, one variable, 5 cycles each:",
+        "  xdotool key --window <prefs> alt+F4 -> cycle 1 did nothing; cycle 2",
+        "      closed the dialog and then REKORDBOX EXITED seconds later.",
+        "  click this X                        -> 5/5 closed, app alive after",
+        "      every one; then 6/6 clean end-to-end runs.",
+        "Every 'the gear click did not open Preferences' fault during",
+        "development was a later run finding the app already gone, killed by an",
+        "earlier alt+F4. The exit is graceful (WM_CLOSE, not a signal) so",
+        "settings are not at risk, but the test was destroying its own subject.",
+        "An UNtargeted alt+F4 is worse: it hits whatever holds focus, which",
+        "during development was the operator's terminal."
+      ],
+      "dx_from_right": 12, "dy_from_top": 11
+    },
+
+    "main_window_anchors": {
+      "_comment": [
+        "How to OPEN this dialog. Third coordinate frame, and it is neither of",
+        "the other two: offsets in PIXELS from the top-right of the main",
+        "window's X CLIENT rect (`xdotool getwindowgeometry`, 1920x1006 at",
+        "+0+28), i.e. screen_x = win_x + win_w - dx_from_right.",
+        "",
+        "Pixels-from-the-right rather than a fraction because rekordbox's",
+        "toolbar is right-anchored with fixed-size icons: widen the window and",
+        "the gear keeps its distance from the right edge, while a fractional",
+        "anchor would drift off it. The existing top-level 'preferences_gear'",
+        "fraction is only correct at the one window size it was calibrated at.",
+        "Measured 2026-08-14: gear centre at screenshot px (1724,116) ->",
+        "screen (1659,63) -> client (1659,35) -> 1920-1659 = 261 from right."
+      ],
+      "preferences_gear": { "dx_from_right": 295, "dy_from_top": 35 }
+    },
+
+    "reference_geometry": {
+      "_comment": [
+        "The dialog size these fractions were calibrated at. audiotest.sh warns",
+        "if the live dialog differs, because every y here is top-anchored",
+        "layout rather than a true proportion -- a resized dialog would move",
+        "the combos relative to a fraction. The pane gate and the positive",
+        "control both fail loudly in that case, so the result is a fault, not a",
+        "wrong answer."
+      ],
+      "w": 806, "h": 824
+    }
+  }
+}

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Launch rekordbox with the patched dxgi.dll loaded.
+#
+# Wine takes builtin PE modules from its own dll dir, so the patched build only
+# gets used when it is loaded as *native* — hence the override. Launching
+# without it (e.g. straight from the desktop menu) silently runs the stock stub
+# and the UI renders once and freezes, which looks like a completely different
+# bug and cost us an afternoon.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export WINEPREFIX="${WINEPREFIX:-$ROOT/prefixes/rb7}"
+export WINEDLLOVERRIDES="dxgi=n${WINEDLLOVERRIDES:+,$WINEDLLOVERRIDES}"
+APP="$WINEPREFIX/drive_c/Program Files/rekordbox/rekordbox 7.2.18/rekordbox.exe"
+
+want="$ROOT/artifacts/dxgi-patched-native-11.15.dll"
+have="$WINEPREFIX/drive_c/windows/system32/dxgi.dll"
+if [[ -f "$want" ]] && ! cmp -s "$want" "$have"; then
+  echo "installing patched dxgi.dll into the prefix" >&2
+  cp -f "$want" "$have"
+fi
+# Run against the PRIVATE Wine tree, the same one bin/rekordbox-wine uses.
+# Launching with the system `wine` silently gives stock libraries -- measured:
+# an arm started that way produced 21 stream teardowns and no working track,
+# because none of the six unix-side fixes were present. Every measurement taken
+# through this script would otherwise be against unpatched Wine.
+PRIVATE_WINE="${RBW_PRIVATE_WINE:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/wine}"
+[ -x "$PRIVATE_WINE/bin/wine" ] || PRIVATE_WINE="$ROOT/prefixes/privwine"
+if [ ! -x "$PRIVATE_WINE/bin/wine" ]; then
+  echo "bin/rekordbox: no private Wine tree — run bin/make-private-wine.sh" >&2
+  exit 2
+fi
+exec env WINESERVER="$PRIVATE_WINE/bin/wineserver" "$PRIVATE_WINE/bin/wine" "$APP" "$@"

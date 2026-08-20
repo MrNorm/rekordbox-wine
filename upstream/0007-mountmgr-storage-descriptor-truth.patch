@@ -1,0 +1,61 @@
+Subject: [PATCH] mountmgr: report the real removability and bus type in
+ StorageDeviceProperty
+
+query_property() answers IOCTL_STORAGE_QUERY_PROPERTY with a comment that says
+"Faking StorageDeviceProperty data" and then reports RemovableMedia = FALSE and
+BusType = BusTypeScsi for every device on the system -- including CD-ROMs and
+USB sticks.
+
+Those two fields are the ones applications actually read, and "a fixed SCSI
+disk" is a worse answer than none: an application that lists removable devices
+filters them out. mountmgr already knows what kind of device this is -- it is
+how GetDriveType() tells a stick from a hard disk -- so it can say so.
+
+Measured with rekordbox 7.2.18, whose EXPORT-mode "Devices" browser stays empty
+for a FAT32 USB stick while the "Explorer" browser beside it correctly lists the
+fixed drives.
+
+The rest of the descriptor is left alone; this only stops the two fields that are
+knowably wrong from being knowably wrong.
+
+---
+--- a/dlls/mountmgr.sys/device.c
++++ b/dlls/mountmgr.sys/device.c
+@@ -1580,6 +1580,37 @@
+             descriptor->ProductRevisionOffset = 0;
+             descriptor->BusType = BusTypeScsi;
+             descriptor->RawPropertiesLength = 0;
++
++            /* RBW-BUSTYPE: the two fields above are the ones applications
++             * actually read, and answering "a fixed SCSI disk" for every device
++             * is worse than answering nothing. We already know what kind of
++             * device this is -- it is why GetDriveType() can tell a stick from a
++             * hard disk -- so say so.
++             *
++             * Measured with rekordbox 7.2.18: its EXPORT-mode "Devices" browser
++             * stays empty for a removable FAT32 stick that is correctly reported
++             * as DRIVE_REMOVABLE, while the "Explorer" browser beside it lists
++             * the fixed drives. Windows reports BusTypeUsb and RemovableMedia
++             * TRUE for a USB mass-storage stick. */
++            switch (device->type)
++            {
++            case DEVICE_HARDDISK:   /* a removable disk: in practice, a USB stick */
++                descriptor->RemovableMedia = TRUE;
++                descriptor->BusType = BusTypeUsb;
++                break;
++            case DEVICE_FLOPPY:
++                descriptor->RemovableMedia = TRUE;
++                break;
++            case DEVICE_CDROM:
++            case DEVICE_DVD:
++                descriptor->RemovableMedia = TRUE;
++                descriptor->BusType = BusTypeAtapi;
++                break;
++            default:
++                break;
++            }
++            TRACE( "RBW-BUSTYPE device type %u -> removable %u bus %u\n",
++                   device->type, descriptor->RemovableMedia, descriptor->BusType );
+             if (!device->serial) descriptor->SerialNumberOffset = 0;
+             else
+             {

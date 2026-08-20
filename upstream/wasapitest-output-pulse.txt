@@ -1,0 +1,179 @@
+# wasapitest transcript — Wine audio driver = pulse (Wine's default)
+# wine-staging 11.15, 2026-08-13T09:40:47Z, Pioneer DDJ-400 attached
+
+render endpoints: 6
+
+[0] Speakers (Alder Lake PCH-P High Definition Audio Controller)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    HRESULTs seen   : 0x8889000e(EXCLUSIVE_MODE_NOT_ALLOWED)
+
+    verdict: EVERY exclusive probe refused with EXCLUSIVE_MODE_NOT_ALLOWED.
+             The driver does not implement exclusive mode at all, so an
+             application building a rate list from it gets nothing.
+
+[1] Speakers (PulseAudio Output)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    HRESULTs seen   : 0x8889000e(EXCLUSIVE_MODE_NOT_ALLOWED)
+
+    verdict: EVERY exclusive probe refused with EXCLUSIVE_MODE_NOT_ALLOWED.
+             The driver does not implement exclusive mode at all, so an
+             application building a rate list from it gets nothing.
+
+[2] Speakers (Alder Lake PCH-P High Definition Audio Controller)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    HRESULTs seen   : 0x8889000e(EXCLUSIVE_MODE_NOT_ALLOWED)
+
+    verdict: EVERY exclusive probe refused with EXCLUSIVE_MODE_NOT_ALLOWED.
+             The driver does not implement exclusive mode at all, so an
+             application building a rate list from it gets nothing.
+
+[3] Speakers (Alder Lake PCH-P High Definition Audio Controller)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    HRESULTs seen   : 0x8889000e(EXCLUSIVE_MODE_NOT_ALLOWED)
+
+    verdict: EVERY exclusive probe refused with EXCLUSIVE_MODE_NOT_ALLOWED.
+             The driver does not implement exclusive mode at all, so an
+             application building a rate list from it gets nothing.
+
+[4] Speakers (DDJ-400 Pro)
+    mix format      : 44100 Hz, 4 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    HRESULTs seen   : 0x8889000e(EXCLUSIVE_MODE_NOT_ALLOWED)
+
+    verdict: EVERY exclusive probe refused with EXCLUSIVE_MODE_NOT_ALLOWED.
+             The driver does not implement exclusive mode at all, so an
+             application building a rate list from it gets nothing.
+
+[5] Speakers (Alder Lake PCH-P High Definition Audio Controller Speaker)
+    mix format      : 48000 Hz, 2 ch, 32 bit
+    shared @ mix    : 0x00000000 S_OK
+
+    EXCLUSIVE, 2 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    EXCLUSIVE, 4 channels
+        rate     16   24  32i  32f
+       44100  XCL XCL XCL XCL
+       48000  XCL XCL XCL XCL
+       88200  XCL XCL XCL XCL
+       96000  XCL XCL XCL XCL
+      176400  XCL XCL XCL XCL
+      192000  XCL XCL XCL XCL
+
+    HRESULTs seen   : 0x8889000e(EXCLUSIVE_MODE_NOT_ALLOWED)
+
+    verdict: EVERY exclusive probe refused with EXCLUSIVE_MODE_NOT_ALLOWED.
+             The driver does not implement exclusive mode at all, so an
+             application building a rate list from it gets nothing.
+
+# --- exclusive stream, end to end ---
+render endpoints: 6
+
+playing a tone on [4] Speakers (DDJ-400 Pro)
+    device period   : default 100000 ns, min 53500 ns
+    Initialize excl : 0x8889000e EXCLUSIVE_MODE_NOT_ALLOWED   (44100 Hz, 4 ch, 32f)

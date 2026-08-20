@@ -1,0 +1,20 @@
+artifacts/**
+artifacts/*.dll
+!artifacts/.gitkeep
+*.exe
+*.log
+*.png
+prefixes/
+runs/**
+!runs/.gitkeep
+!runs/index.jsonl
+upstream/*.exe
+*.zip
+__pycache__/
+*.pyc
+
+# built by bin/fpsmatrix.sh from damagefps.c
+bin/damagefps
+
+# per-run evidence from bin/rbtest.sh
+runs/RBTEST/

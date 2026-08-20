@@ -1,0 +1,141 @@
+# Maintainer: see upstream repository
+#
+# rekordbox-wine — the Wine patches and configuration that rekordbox 7.2.x needs
+# on Linux, plus a launcher that verifies every one of them before starting.
+#
+# WHAT THIS PACKAGE IS NOT: it does not contain rekordbox. rekordbox is
+# proprietary and must be downloaded from rekordbox.com by the user, and signed
+# in to with their own AlphaTheta account. This package ships the patched Wine
+# components, a udev rule, a modprobe rule, and the launcher.
+#
+# STATE, HONESTLY — see GOLD-STATUS.md in the source tree for the evidence
+# behind every line of this:
+#
+#   WORKS, measured: the main window renders and repaints (nothing else gets
+#   past this — stock Wine paints one frame and freezes); library, waveforms and
+#   two-deck playback at 1.00x; Preferences; the File menu and the view-mode
+#   selector that gates EXPORT mode; DDJ-400 exclusive-mode audio at 44100 Hz;
+#   PC MASTER OUT — controller and computer speakers together — with zero stream
+#   teardowns over 465 s; USB export, with the resulting export.pdb validated
+#   outside Wine; the DDJ-400's jog wheels and LEDs.
+#
+#   NOT PROVEN: no exported stick has been read by a real CDJ. The database is
+#   validated by bin/pdbcheck.py, which is a gate and not a finish line.
+#
+#   NOT COMPLETE: the DDJ-400 has never been through a full performance pass —
+#   every pad mode, the FX section, filters, crossfader curve, headphone cue and
+#   hot cues. That needs hands on the hardware.
+#
+#   KNOWN CEILING: AvSetMmThreadCharacteristics is a stub in Wine, so no audio
+#   thread gets real-time priority. The package therefore ships a 512-sample
+#   buffer (11.6 ms), which is what a DDJ-400 user runs on Windows anyway. Going
+#   lower costs roughly one stream teardown every 330 s. See THEMES/T10.
+#
+# ROOT, AND WHY: four of the fixes are unix-side or driver-side Wine libraries
+# that DllOverrides cannot reach, so they must replace files owned by the `wine`
+# package. This package does NOT overwrite them at install time — that would
+# break wine's file ownership and be silently undone by every wine upgrade.
+# They are installed to /usr/share/rekordbox-wine/winedll and the user runs
+# install-system-wine-patches.sh, which backs up each stock file and can revert
+# every one of them. The launcher checks the markers on every start and prints
+# the command if they are missing. The real fix is upstream; that is what the
+# patches in /usr/share/doc/rekordbox-wine/patches are for.
+
+pkgname=rekordbox-wine
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Patched Wine components and launcher for running rekordbox 7.2.x with a DDJ-400 on Linux"
+arch=('x86_64')
+url="https://github.com/REPLACE-ME/rekordbox-wine"
+license=('LGPL-2.1-or-later')  # the Wine patches; the launcher scripts are MIT
+
+# wine-staging is what every measurement in this project was made against.
+# Plain wine may work; it has not been tested, so it is not claimed.
+depends=('wine-staging' 'alsa-lib' 'alsa-utils' 'python')
+# The build compiles Wine libraries from the matching Wine source, so it needs
+# what Wine itself needs. X11 and ALSA headers are load-bearing: without them
+# Wine's configure quietly drops winex11.drv and winealsa.drv and the build
+# would otherwise produce a package with two of the fixes missing and no error.
+makedepends=('clang' 'lld' 'python' 'curl' 'flex' 'bison' 'libx11' 'libxext'
+             'libxrandr' 'libxcomposite' 'libxfixes' 'libxi' 'libxcursor'
+             'alsa-lib' 'dbus' 'freetype2' 'gnutls')
+optdepends=(
+  'pipewire-alsa: audio routing alongside other applications'
+  'rtkit: lets audio threads obtain real-time priority. Without it the desktop portal advertises no realtime budget, libpipewire-module-rt sets RLIMIT_RTTIME to zero inside every ALSA client, and any thread later put on a real-time policy is killed by SIGXCPU. See THEMES/T12'
+  'wine-mono: .NET support inside the prefix'
+  'wine-gecko: embedded browser support inside the prefix'
+)
+install="$pkgname.install"
+
+# Wine cannot be built with link-time optimisation: LTO drops the symbols that
+# ntdll's hand-written syscall dispatcher references from assembly, and the
+# build dies with `undefined reference to init_syscall_frame`. Arch's own wine
+# package disables it for the same reason. !strip and !debug keep makepkg away
+# from the PE builtins, which are not ELF and have no business being processed
+# by binutils here.
+options=('!lto' '!strip' '!debug')
+
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')  # replace with the real hash at release
+
+build() {
+  cd "$srcdir/$pkgname-$pkgver"
+
+  # Build inside $srcdir, not in ~/.cache. A developer's cache holds a Wine tree
+  # that already has the series applied AND whatever diagnostic code was being
+  # measured that week -- so a package built there would quietly ship debug
+  # instrumentation and would not be reproducible on anyone else's machine.
+  export RBW_WINE_BUILD="$srcdir/wine-build"
+
+  # Downloads the Wine source matching the version installed on THIS machine,
+  # applies upstream/0001..0009, configures once, and builds the seven
+  # components. Version-matching is deliberate: a library built from a different
+  # source tree may still load, and nothing about debugging that is worth
+  # anyone's time.
+  ./bin/build-patched-dlls.sh
+}
+
+check() {
+  cd "$srcdir/$pkgname-$pkgver"
+  # Every patched component carries a distinctive marker string. If a marker is
+  # missing, the build silently produced a stock component — the failure mode
+  # that has cost this project whole sessions, because a stock library loads
+  # perfectly and simply behaves as though nothing was ever fixed.
+  #
+  # build-patched-dlls.sh already checks these; this re-checks the files that
+  # were actually staged, which is a different claim.
+  local wine_ver ok=1
+  wine_ver="$(wine --version | sed 's/^wine-//;s/ .*//')"
+
+  local f m
+  for spec in \
+    "artifacts/dxgi-patched-native-$wine_ver.dll:RBW-PATCH" \
+    "artifacts/mmdevapi-patched-native-$wine_ver.dll:RBW-MMDEV" \
+    "artifacts/setupapi-patched-native-$wine_ver.dll:PhysicalDeviceObjectName" \
+    "artifacts/winedll/winealsa.so:RBW-EVENT3" \
+    "artifacts/winedll/winealsa.so:alsa_rawmidi_open" \
+    "artifacts/winedll/winex11.so:RBW-POPUP" \
+    "artifacts/winedll/mountmgr.so:RBW-REMOVABLE" \
+    "artifacts/winedll/mountmgr.sys:RBW-BUSTYPE" \
+    "artifacts/winedll/mountmgr.sys:RBW-VOLNODE" \
+    "artifacts/winedll/wineusb.sys:RBW-USBHCD" \
+    "artifacts/winedll/wineusb.so:RBW-USBHCD" \
+  ; do
+    f="${spec%:*}"; m="${spec##*:}"
+    if [[ ! -f "$f" ]]; then
+      echo "::error:: $f was never built"; ok=0; continue
+    fi
+    # Count rather than `grep -q`: grep exits at the first match, strings takes
+    # SIGPIPE, and under makepkg's `set -e` the check then fails on success.
+    if [[ "$(strings -a "$f" | grep -c -- "$m" || true)" -eq 0 ]]; then
+      echo "::error:: $f has no '$m' marker — stock build?"; ok=0
+    fi
+  done
+  [[ $ok -eq 1 ]]
+}
+
+package() {
+  cd "$srcdir/$pkgname-$pkgver"
+  # One definition of the payload, shared with debian/rules and the rpm spec.
+  packaging/install-tree.sh "$pkgdir"
+}

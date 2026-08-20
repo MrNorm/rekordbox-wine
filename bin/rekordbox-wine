@@ -1,0 +1,599 @@
+#!/usr/bin/env bash
+#
+# rekordbox-wine — run-and-play launcher for rekordbox 7.2.x under Wine.
+#
+# One command. It checks that every piece of the configuration is in place,
+# fixes what it can without asking, tells you exactly what needs root and why,
+# and then starts rekordbox.
+#
+# The design rule here is that EVERY step must be verifiable after the fact.
+# This configuration has silently reverted on us more than once — a launcher
+# that forgot an override, a prefix update that restored a stock DLL, a udev
+# rule that parsed fine and did nothing. In each case the application simply
+# behaved as though unpatched, which looks exactly like a brand-new bug. So the
+# checks below are measurements, not assumptions, and `--check` runs them all
+# and prints a report without launching anything.
+#
+# Usage:
+#   rekordbox-wine              configure if needed, then launch
+#   rekordbox-wine --check      report the state of every step, launch nothing
+#   rekordbox-wine --setup      configure only (use once after install)
+#
+# Exit codes: 0 ok · 1 misconfigured and could not self-repair · 2 bad usage
+set -uo pipefail
+
+SELF="$(basename "$0")"
+PREFIX_DEFAULT="${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/prefix"
+export WINEPREFIX="${RBW_PREFIX:-$PREFIX_DEFAULT}"
+# Wine's own dll dirs, where the stock builtins live. Detected rather than
+# hardcoded: Arch, Debian, Fedora and the WineHQ builds all put them somewhere
+# different, and a wrong path here reports as "your Wine is broken".
+. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/winepaths.sh"
+
+# The private Wine tree. Four of our fixes are unix-side libraries and two are
+# PE drivers, none of which DllOverrides can reach -- so they used to replace
+# files in /usr/lib/wine, which are owned by the distro's wine package. That
+# meant a file conflict, silent reversion on every wine upgrade, and, worst of
+# all, it changed the behaviour of EVERY Wine application on the machine.
+# Instead we build a parallel tree of symlinks to the system Wine (about 5 MB)
+# with real patched files in the six places that need them, and run against
+# that. The system Wine is never touched and other applications never see us.
+PRIVATE_WINE="${RBW_PRIVATE_WINE:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/wine}"
+WINE="$PRIVATE_WINE/bin/wine"
+# The tree mirrors the system's own relative lib path, which differs by distro
+# (Arch lib/wine, Debian lib/<triplet>/wine, Fedora lib64/wine). It records
+# which one it used; never guess it here.
+PW_LIB="$(cat "$PRIVATE_WINE/.wine-layout" 2>/dev/null || echo lib/wine)"
+# Installed by the package; overridable for running out of a source checkout.
+DATADIR="${RBW_DATADIR:-/usr/share/rekordbox-wine}"
+[[ -d "$DATADIR" ]] || DATADIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+MODE=launch
+INSTALLER=
+case "${1:-}" in
+  --check) MODE=check ;;
+  --setup) MODE=setup ;;
+  --install)
+    MODE=install
+    INSTALLER="${2:-}"
+    [[ -n "$INSTALLER" ]] || { echo "usage: $SELF --install <rekordbox-installer.exe>" >&2; exit 2; }
+    [[ -f "$INSTALLER" ]] || { echo "$SELF: no such file: $INSTALLER" >&2; exit 2; }
+    INSTALLER="$(cd "$(dirname "$INSTALLER")" && pwd)/$(basename "$INSTALLER")"
+    shift 2 || shift
+    ;;
+  "")      ;;
+  *) echo "usage: $SELF [--check|--setup|--install <installer.exe>]" >&2; exit 2 ;;
+esac
+
+FAIL=0
+ok()   { printf '  \033[32mok\033[0m    %s\n' "$*"; }
+warn() { printf '  \033[33mwarn\033[0m  %s\n' "$*"; }
+bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; FAIL=1; }
+note() { printf '        %s\n' "$*"; }
+hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+# Registry reads parse the prefix's user.reg DIRECTLY rather than shelling out
+# to `wine reg query`.
+#
+# This is not a style preference. `wine reg query` BOOTS the prefix: it starts a
+# wineserver, services.exe, explorer.exe and the rest, purely as a side effect of
+# reporting state. So `--check`, whose entire promise is "report and launch
+# nothing", was starting a full Wine session; and because the default prefix
+# below does not exist until first use, running --check on a fresh machine
+# created and winebooted a second, empty prefix and then reported that rekordbox
+# was missing from it. Reading the file has neither effect.
+#
+# Format, for anyone maintaining this:  [Software\\Wine\\DllOverrides] <ts>
+#                                       "dxgi"="native"
+# Section names are backslash-escaped in the file; keys are quoted.
+reg_get() { # reg_get <section-with-single-backslashes> <key>
+  local f="$WINEPREFIX/user.reg"
+  [[ -r "$f" ]] || return 1
+  # The section is passed through the ENVIRONMENT, not through `awk -v`, because
+  # awk expands escape sequences in a -v assignment: the doubled backslashes
+  # that .reg section headers actually contain arrive at the script as single
+  # ones and then match nothing. Measured — every override read back as "unset"
+  # on a correctly configured prefix, which is the worst possible failure for a
+  # checker: it reports healthy configuration as broken.
+  RBW_SECT="[${1//\\/\\\\}]" RBW_KEY="\"$2\"=" awk '
+    BEGIN { sect = ENVIRON["RBW_SECT"]; key = ENVIRON["RBW_KEY"] }
+    /^\[/ { inside = (index($0, sect) == 1) }
+    inside && index($0, key) == 1 {
+      v = substr($0, length(key) + 1); gsub(/^"|"$/, "", v); print v; exit
+    }' "$f" | tr -d '\r'
+}
+reg_set() { # reg_set <section> <key> <value> — only ever called outside --check
+  WINEDEBUG=-all wine reg add "HKCU\\$1" /v "$2" /d "$3" /f >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------- prerequisites
+hdr "Prerequisites"
+
+command -v wine >/dev/null || { bad "wine is not installed"; exit 1; }
+WINE_VER="$(wine --version 2>/dev/null | sed 's/^wine-//;s/ .*//')"
+ok "wine $WINE_VER"
+
+if [[ ! -d "$WINEPREFIX" ]]; then
+  if [[ $MODE == check ]]; then
+    bad "no prefix at $WINEPREFIX"
+  else
+    warn "creating prefix at $WINEPREFIX (first run, takes a minute)"
+    mkdir -p "$WINEPREFIX"
+    WINEDEBUG=-all wineboot -u >/dev/null 2>&1
+    ok "prefix created"
+  fi
+else
+  ok "prefix $WINEPREFIX"
+fi
+
+# ------------------------------------------------------------- patched PE DLLs
+# Wine resolves builtin PE DLLs from its OWN dll directory, not from the prefix,
+# and it refuses a `native` override on any file still carrying winebuild's
+# "Wine builtin DLL" marker. So a patched DLL needs BOTH: the file copied into
+# the prefix with that marker blanked, AND a native override registered. Miss
+# either and you silently get stock behaviour.
+hdr "Patched Wine DLLs"
+
+declare -A DLL_WHY=(
+  [dxgi]="implements IDXGIOutput::WaitForVBlank — without it any JUCE app driving repaints from VBlankAttachment paints one frame and freezes (T01)"
+  [mmdevapi]="allows event-driven exclusive-mode audio — without it the sample-rate list is empty (T03)"
+  [setupapi]="reports SPDRP_PHYSICAL_DEVICE_OBJECT_NAME, which was a NULL placeholder — without it an application cannot match an enumerated volume to a drive letter, so a USB stick can never be found (T02)"
+)
+# A marker must be a string the PATCH introduces and stock does NOT have.
+#
+# `winmm` deliberately has none. Patch 0007's PE half plants no RBW string, and
+# the marker originally used here was "midiInMessage" -- an exported symbol
+# present in the stock builtin (measured: 2 hits in
+# /usr/lib/wine/x86_64-windows/winmm.dll). That check could never fail, which is
+# worse than no check: it reported a stock DLL as patched. Detection for winmm
+# therefore rests entirely on the byte-compare against the artifact above.
+#
+# cfgmgr32 and winmm were REMOVED from the series on 2026-08-17 with the
+# evidence recorded in PACKAGE.md -- cfgmgr32 was never loaded at all (RBW-CFGMGR
+# appears in no run log), and the winmm work was measured unnecessary once the
+# HCD driver landed. They stayed in this list afterwards, which meant the
+# launcher demanded two artifacts that nothing builds any more and reported a
+# correctly installed system as broken.
+declare -A DLL_MARKER=(
+  [dxgi]="RBW-PATCH"
+  [mmdevapi]="RBW-MMDEV"
+  [setupapi]="PhysicalDeviceObjectName"
+)
+
+for dll in dxgi mmdevapi setupapi; do
+  art="$DATADIR/artifacts/$dll-patched-native-$WINE_VER.dll"
+  dst="$WINEPREFIX/drive_c/windows/system32/$dll.dll"
+
+  if [[ ! -f "$art" ]]; then
+    bad "$dll: no artifact for wine $WINE_VER at $art"
+    note "build it with: $DATADIR/bin/build-patched-dlls.sh $dll"
+    continue
+  fi
+
+  # Compare against the artifact, not against "is a file present" — a prefix
+  # update silently restores the stock builtin over the top and the sizes are
+  # the only cheap tell.
+  if [[ ! -f "$dst" ]] || ! cmp -s "$art" "$dst"; then
+    if [[ $MODE == check ]]; then
+      bad "$dll: prefix copy differs from the patched artifact"
+      continue
+    fi
+    cp -f "$art" "$dst.new" && mv -f "$dst.new" "$dst"
+    warn "$dll: installed patched build"
+  fi
+
+  # The marker must survive into the installed file, or the patch is not in it.
+  # Where no marker exists (winmm), say so rather than quietly claiming a pass.
+  if [[ -n "${DLL_MARKER[$dll]:-}" ]]; then
+    if ! grep -q "${DLL_MARKER[$dll]}" <(strings -a "$dst"); then
+      bad "$dll: installed file has no ${DLL_MARKER[$dll]} marker"
+      continue
+    fi
+  else
+    note "$dll: no patch marker exists; verified by byte-compare only"
+  fi
+
+  ov="$(reg_get 'Software\Wine\DllOverrides' "$dll")"
+  if [[ "$ov" != native ]]; then
+    if [[ $MODE == check ]]; then bad "$dll: override is '${ov:-unset}', not native"; continue; fi
+    reg_set 'Software\Wine\DllOverrides' "$dll" native
+    warn "$dll: set native override"
+  fi
+  ok "$dll — ${DLL_WHY[$dll]}"
+done
+
+# ------------------------------------------------------------------ audio path
+hdr "Audio"
+
+# Wine's default driver order puts winepulse first, and winepulse implements no
+# exclusive mode at all. rekordbox builds its sample-rate list by probing
+# IsFormatSupported in EXCLUSIVE mode, so on pulse every probe on every device
+# fails and the list is empty for everything.
+drv="$(reg_get 'Software\Wine\Drivers' Audio)"
+if [[ "$drv" != alsa ]]; then
+  if [[ $MODE == check ]]; then
+    bad "audio driver is '${drv:-default (pulse first)}', not alsa"
+  else
+    reg_set 'Software\Wine\Drivers' Audio alsa
+    warn "audio driver set to alsa"
+  fi
+else
+  ok "audio driver = alsa (winepulse has no exclusive mode; the rate list stays empty on it)"
+fi
+
+# THE DESKTOP'S OWN AUDIO. rekordbox opens ALSA `hw:` devices directly, which is
+# what exclusive mode means. If PipeWire tries to start a node on the same card
+# while that is happening, its open returns EBUSY, the node goes to `error`, and
+# WirePlumber's error handler then throws a Lua exception on its own error
+# message (alsa.lua:425 concatenates a nil node.name) — so the node is never
+# retried and the DEVICE DISAPPEARS from the desktop until wireplumber is
+# restarted. Measured on this machine 2026-08-17: every sink on the system gone
+# for hours, reproduced Wine-free in 30 s by bin/pwclash.sh. See THEMES/T09.
+#
+# A user who has just finished a set should not have to know any of that, so:
+# detect the state and repair it. Restarting wireplumber is harmless — it
+# recreates the nodes and takes about a second.
+if command -v pactl >/dev/null 2>&1; then
+  sinks=$(pactl list short sinks 2>/dev/null | grep -vc auto_null)
+  if [[ "${sinks:-0}" -eq 0 ]]; then
+    if [[ $MODE == check ]]; then
+      bad "PipeWire has no real audio sinks — the desktop has lost its devices"
+      note "repair: systemctl --user restart wireplumber   (see THEMES/T09)"
+    else
+      warn "PipeWire has no real audio sinks — restarting wireplumber"
+      systemctl --user restart wireplumber 2>/dev/null && sleep 2
+      sinks=$(pactl list short sinks 2>/dev/null | grep -vc auto_null)
+      if [[ "${sinks:-0}" -gt 0 ]]; then
+        ok "audio devices restored ($sinks sink(s))"
+      else
+        bad "still no sinks after restarting wireplumber — investigate before playing"
+      fi
+    fi
+  else
+    ok "PipeWire has $sinks real sink(s)"
+  fi
+fi
+
+# winealsa.so is a UNIX library, not a PE — it cannot be overridden per-prefix
+# and cannot be shipped in the prefix. It has to replace the system file.
+hdr "Private Wine tree"
+# Built from symlinks to the system Wine plus our six patched files, so the
+# distro's Wine is never modified and no other application is affected. It is
+# tied to one Wine version: after a wine upgrade the symlinks still resolve but
+# the patched files were compiled against the old headers, so rebuild.
+_pw_ver="$(cat "$PRIVATE_WINE/.wine-version" 2>/dev/null || echo none)"
+if [[ ! -x "$WINE" ]]; then
+  if [[ $MODE == check ]]; then
+    bad "no private Wine tree at $PRIVATE_WINE"
+    note "Build it with:  $DATADIR/bin/make-private-wine.sh"
+  else
+    warn "building the private Wine tree (about 5 MB of symlinks)"
+    if RBW_WINEDLL_DIR="$DATADIR/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1 \
+       || RBW_WINEDLL_DIR="$DATADIR/artifacts/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1; then
+      ok "private Wine tree built"
+    else
+      bad "could not build the private Wine tree"
+      note "Run it directly to see why:  $DATADIR/bin/make-private-wine.sh"
+    fi
+  fi
+elif [[ "$_pw_ver" != "$WINE_VER" ]]; then
+  if [[ $MODE == check ]]; then
+    bad "private Wine tree was built against wine $_pw_ver, system wine is $WINE_VER"
+    note "Rebuild with:  $DATADIR/bin/make-private-wine.sh"
+  else
+    warn "wine changed $_pw_ver -> $WINE_VER; rebuilding the private tree"
+    RBW_WINEDLL_DIR="$DATADIR/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1 \
+      || RBW_WINEDLL_DIR="$DATADIR/artifacts/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1 \
+      || bad "rebuild failed — run $DATADIR/bin/make-private-wine.sh"
+  fi
+else
+  ok "private Wine tree matches system wine $WINE_VER — system Wine untouched"
+fi
+
+RBW_ALSA="$PRIVATE_WINE/$PW_LIB/x86_64-unix/winealsa.so"
+if [[ -f "$RBW_ALSA" ]]; then
+  # Grep for EVERY marker. The old check tested RBW-EVENT alone, and a 0003-only
+  # build -- one of which is sitting in artifacts/winedll/ as a bisect point --
+  # passes that cleanly while missing three later patches.
+  have=$(strings -a "$RBW_ALSA" | grep -o 'RBW-[A-Z]*' | sort -u | tr '\n' ' ')
+  # Require the needed markers to be PRESENT, not to be the complete list. The
+  # old exact-equality test failed the moment a later patch added a marker, and
+  # reported a MORE patched library as "partially patched" — measured: a build
+  # carrying eight RBW markers was flagged as missing the three it had.
+  # The wanted markers must track the CURRENT series (PACKAGE.md), not a
+  # historical one. RBW-MIDIENUM and RBW-MIDIIFACE belonged to patches 0006 and
+  # 0007, which were measured unnecessary and deleted on 2026-08-17 — so this
+  # check was telling a correctly installed system that it was "PARTIALLY
+  # patched", which is exactly the kind of false alarm that sends the next
+  # session chasing a phantom. 0004's MIDI fix plants no RBW- marker; its
+  # signature is the rawmidi TRACE string, so test for that directly.
+  want="RBW-EVENT"
+  missing=""
+  for m in $want; do [[ " $have" == *" $m "* ]] || missing+="$m "; done
+  if ! grep -qa 'sending directly to' "$RBW_ALSA"; then
+    missing+="rawmidi(0004) "
+  fi
+  if [[ -z "$missing" ]]; then
+    ok "winealsa.so patched in the private tree: ${have}plus the 0004 rawmidi MIDI path"
+  elif [[ -n "$have" ]]; then
+    warn "private winealsa.so is PARTIALLY patched: has [${have}], missing [${missing}]"
+    note "patch 0004 (MIDI naming) plants no marker and cannot be detected this way"
+  else
+    bad "private winealsa.so is stock — the controller CANNOT work without it"
+    note "Exclusive event-driven streams get AUDCLNT_E_BUFFER_TOO_LARGE on"
+    note "roughly every other event (measured: 343 refusals in 344 periods),"
+    note "and MIDI ports report as 'DDJ-400 - DDJ-400 MIDI 1' instead of 'DDJ-400'."
+    note "Rebuild with:  $DATADIR/bin/make-private-wine.sh"
+  fi
+fi
+
+# The six files that cannot be overridden per-prefix, checked inside the PRIVATE
+# tree. Each is silent in a different way when it is missing, so each says what
+# it costs rather than just naming a marker.
+check_private_file() {   # relative path under lib/wine, marker, what breaks
+  local rel="$1" marker="$2" cost="$3"
+  local path="$PRIVATE_WINE/$PW_LIB/$rel"
+  local name; name="$(basename "$rel")"
+  [[ -f "$path" ]] || { bad "$name missing from the private Wine tree — $cost"; return; }
+  if [[ "$(strings -a "$path" | grep -c -- "$marker" || true)" -gt 0 ]]; then
+    ok "$name patched in the private tree ($marker)"
+  else
+    bad "$name in the private tree is stock — $cost"
+    note "Rebuild with:  $DATADIR/bin/make-private-wine.sh"
+  fi
+}
+
+check_private_file "x86_64-unix/winex11.so" RBW-POPUP \
+  "the File menu and the view-mode selector never appear, so EXPORT mode is unreachable"
+check_private_file "x86_64-unix/mountmgr.so" RBW-REMOVABLE \
+  "a USB stick never reports DRIVE_REMOVABLE"
+check_private_file "x86_64-windows/mountmgr.sys" RBW-VOLNODE \
+  "SetupAPI enumerates no volumes at all and the USB export panel stays empty"
+
+# wineusb is the controller's gate, and it is TWO files that must match: the PE
+# driver and its unix side. Installing one without the other is worse than
+# installing neither -- wineusb.so gains a unixlib entry point that wineusb.sys
+# is the only caller of.
+check_private_file "x86_64-windows/wineusb.sys" RBW-USBHCD \
+  "rekordbox cannot open \\.\HCDn, so it rejects the controller it just detected and never opens its MIDI port"
+check_private_file "x86_64-unix/wineusb.so" RBW-USBHCD \
+  "the HCD driver's unix half is missing and the PE half is its only caller"
+
+# ------------------------------------------------------------------- rtkit
+# Not required for the shipping 512-sample configuration, but a system without
+# it carries a live trap: xdg-desktop-portal then advertises no realtime budget,
+# libpipewire-module-rt (loaded inside THIS process via the ALSA plugin) sets
+# RLIMIT_RTTIME to {0,0} -- soft and hard, irreversibly -- and any thread that
+# later lands on a real-time policy is killed by SIGXCPU with no error at all.
+if [[ -r /proc/self/limits ]]; then
+  if systemctl is-active rtkit-daemon >/dev/null 2>&1; then
+    ok "rtkit-daemon running — real-time scheduling is available and survivable"
+  else
+    warn "rtkit-daemon is not running — no audio thread can obtain real-time priority"
+    note "Not fatal at the shipped 512-sample buffer, but RLIMIT_RTTIME is then"
+    note "forced to zero inside this process and any real-time policy applied to"
+    note "one of its threads kills it silently. See THEMES/T12."
+    note "Install with:  sudo pacman -S rtkit && sudo systemctl enable --now rtkit-daemon"
+  fi
+fi
+
+# ------------------------------------------------------------------ ntsync
+# THE SINGLE BIGGEST PERFORMANCE FACTOR. Without /dev/ntsync every Windows
+# synchronisation primitive becomes a wineserver round-trip. rekordbox spins on
+# WaitForSingleObject ~6,400 times a second, so the server burned 43-65% of a
+# CPU and the UI was visibly laggy. With ntsync the same waits are handled in
+# the kernel and wineserver drops to ~2%.
+#
+# wineserver opens /dev/ntsync ONCE at startup and caches the result
+# (server/inproc_sync.c: `static int fd = -2`). Loading the module while
+# wineserver is already running does nothing -- it must be restarted.
+hdr "Kernel sync (ntsync)"
+if [[ -e /dev/ntsync ]]; then
+  ok "/dev/ntsync present — sync primitives handled in-kernel"
+  if [[ -e /etc/modules-load.d/rekordbox-wine.conf ]]; then
+    ok "loads automatically at boot"
+  else
+    warn "not configured to load at boot"
+    note "echo ntsync | sudo tee /etc/modules-load.d/rekordbox-wine.conf"
+  fi
+else
+  bad "/dev/ntsync ABSENT — expect heavy wineserver CPU and a laggy UI"
+  note "sudo modprobe ntsync"
+  note "then kill wineserver: it caches the device fd at startup and never retries"
+fi
+
+# ------------------------------------------------------------------- controller
+hdr "Controller"
+
+# snd_seq_dummy's "Midi Through" loopback enumerates ahead of real hardware and
+# rekordbox binds to it, so no MIDI ever reaches the controller.
+if lsmod 2>/dev/null | grep -q '^snd_seq_dummy'; then
+  warn "snd_seq_dummy is loaded — its 'Midi Through' loopback shadows the controller"
+  note "sudo modprobe -r snd_seq_dummy"
+  note "permanent: echo 'blacklist snd_seq_dummy' | sudo tee /etc/modprobe.d/rekordbox-wine.conf"
+else
+  ok "snd_seq_dummy not loaded"
+fi
+
+# The udev rule MUST sort below 73-seat-late.rules, which is what consumes the
+# uaccess tag. Numbered 99- it parses cleanly, applies nothing, and the device
+# stays root-only — a failure with no error message anywhere.
+if [[ -e /etc/udev/rules.d/60-pioneer-ddj.rules ]]; then
+  ok "udev rule installed (must sort below 73-seat-late.rules, which consumes uaccess)"
+else
+  warn "no /etc/udev/rules.d/60-pioneer-ddj.rules — Wine cannot see the controller's HID interface"
+  note "sudo install -m644 $DATADIR/packaging/60-pioneer-ddj.rules /etc/udev/rules.d/"
+  note "then replug the controller"
+fi
+
+if lsusb 2>/dev/null | grep -qi '2b73:'; then
+  hid="$(ls /dev/hidraw* 2>/dev/null | head -1)"
+  if [[ -n "$hid" ]] && [[ -r "$hid" ]]; then
+    ok "Pioneer device present and its HID node is readable"
+  else
+    warn "Pioneer device present but no readable /dev/hidraw* — replug it"
+  fi
+else
+  note "no Pioneer device connected (fine if you are not using one)"
+fi
+
+# --------------------------------------------------------------- session state
+# A prefix left holding processes from a previous run is not untidy, it is slow.
+# Measured 2026-08-14: 36 orphaned Wine processes, 3.1 GB resident, 650 CPU-
+# seconds burned, and three duplicate rekordbox icons in the system tray. Worse,
+# wineserver opens /dev/ntsync ONCE and caches the fd for life, so a session
+# inherited from before the module was loaded runs every sync primitive through
+# a server round-trip -- 43-65% wineserver CPU against 1.5-1.9% with ntsync.
+# That is the difference the user reported as the UI becoming laggy over time.
+hdr "Session state"
+if [[ -x "$DATADIR/bin/rbclean.sh" ]]; then
+  if RBW_PREFIX="$WINEPREFIX" "$DATADIR/bin/rbclean.sh" --check >/dev/null 2>&1; then
+    ok "prefix is clean — no processes left from a previous run"
+  elif [[ $MODE == check ]]; then
+    warn "the prefix still holds processes from a previous session"
+    note "they cost RAM and CPU, they put duplicate icons in your system tray,"
+    note "and a wineserver older than /dev/ntsync never picks ntsync up."
+    note "clear them with: $DATADIR/bin/rbclean.sh"
+  else
+    warn "clearing processes left over from a previous session"
+    RBW_PREFIX="$WINEPREFIX" "$DATADIR/bin/rbclean.sh" --quiet \
+      || bad "could not clear the previous session — see $DATADIR/bin/rbclean.sh"
+  fi
+else
+  warn "bin/rbclean.sh not installed — cannot verify the prefix is idle"
+fi
+
+# --------------------------------------------------------------- audio settings
+# THE PC MASTER OUT FIX. THEMES/T10 phases 34-42.
+#
+# rekordbox will not produce ANY audio until every output device has completed
+# three seconds' worth of callbacks, and it then keeps each device's queue three
+# buffers deep and tears BOTH streams down after 100 close-spaced corrections.
+# Two of its own settings decide whether that machinery is stable under Wine:
+#
+#   WasapiPolling = 0  the writer sizes each block from GetBufferSize(), which
+#                      under Wine is four periods for the exclusive controller
+#                      stream and one for the shared PC endpoint. The two
+#                      devices then run at 43 and 172 callbacks a second, the
+#                      queues diverge, and the engine restarts its whole audio
+#                      subsystem every 15.9 s -- playback runs at 0.05x with a
+#                      1.2 s dropout four times a minute. Measured, repeatedly.
+#   WasapiPolling = 1  the writer uses the device PERIOD instead, both devices
+#                      run at the same rate, and playback is 1.00x.
+#
+#   AudioBufferSize    at 256 frames a residual teardown still arrives about
+#                      once every three minutes, because Wine gives no rekordbox
+#                      thread real-time priority and the scheduling jitter is a
+#                      large fraction of a 5.8 ms block. At 512 (11.6 ms):
+#                      465 s of continuous play, ZERO teardowns. 512 is
+#                      therefore the floor this launcher enforces; a user who
+#                      has chosen something larger is left alone.
+#
+# The file is rewritten by rekordbox every ~15 s while it runs, so this must
+# happen with the application stopped -- which the session-state step above has
+# just guaranteed.
+hdr "Audio settings"
+SETTINGS="$(ls "$WINEPREFIX"/drive_c/users/*/AppData/Roaming/Pioneer/rekordbox6/rekordbox3.settings 2>/dev/null | head -1)"
+if [[ -z "$SETTINGS" ]]; then
+  note "no rekordbox3.settings yet — it appears after rekordbox has run once"
+  note "re-run this launcher afterwards to apply the PC MASTER OUT fix"
+else
+  RBW_SETTINGS="$SETTINGS" RBW_MODE="$MODE" python3 - <<'PYEOF'
+import os, re, sys
+path = os.environ["RBW_SETTINGS"]; check = os.environ["RBW_MODE"] == "check"
+d = open(path, "rb").read()
+def get(key):
+    m = re.search(('name="%s" val="([^"]*)"' % key).encode(), d)
+    return m.group(1).decode() if m else None
+def put(data, key, val):
+    return re.sub(('(name="%s" val=")[^"]*(")' % key).encode(),
+                  lambda m: m.group(1) + val.encode() + m.group(2), data, count=1)
+changed = []
+pol = get("WasapiPolling")
+if pol is None:
+    print("        WasapiPolling is not in the settings file — cannot set it")
+elif pol != "1":
+    if check: print("  \033[33mwarn\033[0m  WasapiPolling is %s, not 1 — PC MASTER OUT will stall at 0.05x" % pol)
+    else:
+        d = put(d, "WasapiPolling", "1"); changed.append("WasapiPolling %s -> 1" % pol)
+else:
+    print("  \033[32mok\033[0m    WasapiPolling = 1")
+buf = get("AudioBufferSize")
+if buf is None:
+    print("        AudioBufferSize is not in the settings file")
+elif not buf.isdigit() or int(buf) < 512:
+    if check: print("  \033[33mwarn\033[0m  AudioBufferSize is %s — below 512 a teardown arrives every ~3 min" % buf)
+    else:
+        d = put(d, "AudioBufferSize", "512"); changed.append("AudioBufferSize %s -> 512" % buf)
+else:
+    print("  \033[32mok\033[0m    AudioBufferSize = %s (>= 512)" % buf)
+if changed:
+    open(path + ".rbw-backup", "wb").write(open(path, "rb").read())
+    open(path, "wb").write(d)
+    for c in changed:
+        print("  \033[32mok\033[0m    %s   (previous file kept as rekordbox3.settings.rbw-backup)" % c)
+PYEOF
+fi
+
+# ---------------------------------------------------------------- known issues
+if [[ $MODE == check ]]; then
+  hdr "Known unresolved issues"
+  cat <<'EOF'
+  · No exported USB stick has ever been read by a real CDJ. The export itself
+    works and bin/pdbcheck.py validates the database outside Wine, but that is
+    a gate, not a finish line. See THEMES/T02.
+  · The DDJ-400 has never been through a full performance pass — every pad
+    mode, the FX section, filters, crossfader curve, headphone cue, hot cues.
+    Jog wheels and LEDs are confirmed. See THEMES/T05.
+  · Latency is 512 samples (11.6 ms), which is what a DDJ-400 user runs on
+    Windows too. Lower costs about one stream teardown every 330 s, because
+    AvSetMmThreadCharacteristics is still a stub in Wine and no audio thread
+    gets real-time priority. See THEMES/T10.
+  · Frame rate is healthy and measured: 58 fps with a track loaded, zero
+    dropped frames. With both decks empty rekordbox runs its own 33 ms frame
+    limiter and idles at 30 fps — that is the application's design, not a
+    fault. Re-measure with bin/fpsmatrix.sh if it ever feels wrong.
+EOF
+  [[ $FAIL -eq 0 ]] && printf '\n\033[32mAll configured steps verified.\033[0m\n' \
+                    || printf '\n\033[31mSome steps failed — see FAIL lines above.\033[0m\n'
+  exit $FAIL
+fi
+
+[[ $MODE == setup ]] && { echo; echo "Setup complete. Run '$SELF --check' to verify."; exit $FAIL; }
+
+# --------------------------------------------------------------------- install
+# Everything above has already prepared the prefix -- the patched builtins, the
+# overrides and the audio settings -- so by here the installer is running into a
+# configured prefix rather than a bare one. That ordering matters: rekordbox's
+# installer starts the application at the end, and an unprepared prefix means
+# the first thing a new user sees is the one-frame freeze this project exists to
+# fix.
+if [[ $MODE == install ]]; then
+  hdr "Installing rekordbox"
+  note "$INSTALLER"
+  note "the silent installer still shows ONE language dialog — press Return"
+  if env WINESERVER="$PRIVATE_WINE/bin/wineserver" "$WINE" "$INSTALLER" /S; then
+    EXE="$(find "$WINEPREFIX/drive_c/Program Files/rekordbox" -maxdepth 2 -name 'rekordbox.exe' 2>/dev/null | sort -V | tail -1)"
+    if [[ -n "$EXE" ]]; then
+      ok "installed: $EXE"
+      echo; echo "Now run '$SELF' to launch, or '$SELF --check' to verify."
+      exit 0
+    fi
+    bad "the installer finished but no rekordbox.exe appeared under the prefix"
+    exit 1
+  fi
+  bad "the installer exited non-zero"
+  exit 1
+fi
+
+# ---------------------------------------------------------------------- launch
+EXE="$(find "$WINEPREFIX/drive_c/Program Files/rekordbox" -maxdepth 2 -name 'rekordbox.exe' 2>/dev/null | sort -V | tail -1)"
+if [[ -z "$EXE" ]]; then
+  bad "rekordbox.exe not found under $WINEPREFIX/drive_c/Program Files/rekordbox"
+  note "install it with: $SELF --install <rekordbox-installer.exe>"
+  exit 1
+fi
+
+hdr "Launching"
+note "$EXE"
+exec env WINEDEBUG="${WINEDEBUG:--all}" WINESERVER="$PRIVATE_WINE/bin/wineserver" "$WINE" "$EXE" "$@"

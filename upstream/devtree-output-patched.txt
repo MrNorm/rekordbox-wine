@@ -1,0 +1,18 @@
+=== whole device tree, 4 levels ===
+CM_Locate_DevNodeW(root) -> CR_NO_SUCH_DEVINST
+
+=== the DDJ-400, and what can be reached from it ===
+found: HID\VID_2B73&PID_0026&MI_04\259&-----&0&0&0
+  parent: USB\VID_2B73&PID_0026&MI_04\259&-----&0&0&0
+  grandparent: ROOT\WINE\WINEBUS
+  siblings of the HID interface under the grandparent:
+    ROOT\WINE\WINEBUS   [status: CR_SUCCESS st=0000000A prob=00000000]
+      WINEBUS\VID_845E&PID_0001\0&0000&0&0&0   [status: CR_SUCCESS st=0000000A prob=00000000]
+      WINEBUS\VID_845E&PID_0002\0&0000ffffffff0002845e&0&0&0   [status: CR_SUCCESS st=0000000A prob=00000000]
+      USB\VID_2B73&PID_0026&MI_04\259&-----&0&0&0   [status: CR_SUCCESS st=0000000A prob=00000000]
+
+What to look for: on Windows the grandparent is the USB composite
+device USB\VID_2B73&PID_0026\<serial> and its children are MI_00..MI_04,
+one of which is the MIDI interface. If the grandparent is ROOT\WINE\WINEBUS
+and the siblings are unrelated devices, the tree cannot express this
+hardware and no amount of correct API will find the MIDI interface.

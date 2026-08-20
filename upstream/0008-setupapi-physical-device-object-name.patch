@@ -1,0 +1,49 @@
+Subject: [PATCH] setupapi: make SPDRP_PHYSICAL_DEVICE_OBJECT_NAME readable
+
+The PropertyMap entry for SPDRP_PHYSICAL_DEVICE_OBJECT_NAME is a NULL
+placeholder, so every SetupDiGetDeviceRegistryProperty() asking for it fails.
+
+It is not a decorative property. An application that wants to know which drive
+letter belongs to which device joins this string against QueryDosDevice(), and
+with the property unavailable the join can never succeed -- the device is
+enumerated but can never be matched to a volume.
+
+Measured with rekordbox 7.2.18: its USB export browser enumerates
+GUID_DEVCLASS_VOLUME, reads SPDRP_CAPABILITIES, SPDRP_DEVICEDESC,
+SPDRP_PHYSICAL_DEVICE_OBJECT_NAME and SPDRP_FRIENDLYNAME from each device, then
+walks the drive letters and matches on
+
+    SPDRP_PHYSICAL_DEVICE_OBJECT_NAME == QueryDosDeviceW(letter)
+
+which on this machine is "\Device\Harddisk1" for E:. With the property mapped to
+a registry value the match succeeds and the device appears.
+
+Backing it with a registry value is the smallest change that makes the read work
+and lets whoever creates the devnode supply the name.
+
+---
+--- a/dlls/setupapi/devinst.c
++++ b/dlls/setupapi/devinst.c
+@@ -605,7 +605,21 @@
+     PROPERTY_MAP_ENTRY(REG_SZ, "Mfg", DEVPROP_TYPE_STRING),
+     PROPERTY_MAP_ENTRY(REG_SZ, "FriendlyName", 0),
+     PROPERTY_MAP_ENTRY(REG_SZ, "LocationInformation", DEVPROP_TYPE_STRING),
+-    { 0, NULL, NULL, DEVPROP_TYPE_STRING }, /* SPDRP_PHYSICAL_DEVICE_OBJECT_NAME */
++    /* RBW-PDONAME: SPDRP_PHYSICAL_DEVICE_OBJECT_NAME was a NULL placeholder, so
++     * every SetupDiGetDeviceRegistryProperty() asking for it failed. It is not a
++     * decorative property: an application that wants to know which drive letter
++     * belongs to which device joins this string against QueryDosDevice(), and
++     * with the property unavailable the join can never succeed.
++     *
++     * Measured with rekordbox 7.2.18: its EXPORT-mode device browser enumerates
++     * GUID_DEVCLASS_VOLUME, reads SPDRP_CAPABILITIES, SPDRP_DEVICEDESC,
++     * SPDRP_PHYSICAL_DEVICE_OBJECT_NAME and SPDRP_FRIENDLYNAME from each device,
++     * and then matches that third one against QueryDosDeviceW(L"E:") --
++     * "\\Device\\Harddisk1" here.
++     *
++     * Backing it with a registry value lets whoever creates the devnode supply
++     * it, and makes the read succeed instead of failing outright. */
++    PROPERTY_MAP_ENTRY(REG_SZ, "PhysicalDeviceObjectName", DEVPROP_TYPE_STRING), /* SPDRP_PHYSICAL_DEVICE_OBJECT_NAME */
+     PROPERTY_MAP_ENTRY(REG_DWORD, "Capabilities", DEVPROP_TYPE_INT32),
+     PROPERTY_MAP_ENTRY(REG_DWORD, "UINumber", DEVPROP_TYPE_INT32),
+     PROPERTY_MAP_ENTRY(REG_MULTI_SZ, "UpperFilters", DEVPROP_TYPE_STRING_LIST),

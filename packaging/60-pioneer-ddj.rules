@@ -1,0 +1,19 @@
+# Pioneer DJ / AlphaTheta controllers — grant the logged-in user access to the
+# HID interface.
+#
+# Why this is needed: rekordbox identifies a connected controller through the
+# Windows HID stack (HidD_GetHidGuid / SetupDiEnumDeviceInterfaces /
+# HidD_GetAttributes), not through MIDI. Wine's winebus.sys enumerates HID
+# devices from /dev/hidraw*, which is root-only by default, so under Wine the
+# controller is invisible to that path. rekordbox then never binds the device
+# and never opens its MIDI port — the controller sits in its power-on LED
+# animation and no control does anything.
+#
+# TAG+="uaccess" gives the active seat's user an ACL on the node, which is the
+# same mechanism game controllers use. No group membership required.
+#
+# The 60- prefix is load-bearing: systemd acts on the uaccess tag in
+# /usr/lib/udev/rules.d/73-seat-late.rules, so a rule numbered above 73 adds the
+# tag too late and no ACL is ever granted. This file was first written as 99-
+# and silently did nothing.
+KERNEL=="hidraw*", ATTRS{idVendor}=="2b73", MODE="0660", GROUP="audio", TAG+="uaccess"

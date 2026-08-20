@@ -1,0 +1,68 @@
+post_install() {
+  cat <<'EOF'
+
+rekordbox-wine is installed. It does NOT modify your system Wine.
+
+The fixes live in a private Wine tree (about 16 MB of symlinks to your system
+Wine, plus six patched files), built automatically on first run. Every other
+Wine application on this machine keeps using the distro's Wine, unchanged.
+
+Two steps, neither needs root:
+
+  1. Install rekordbox itself. Not included -- it is proprietary. Download it
+     from rekordbox.com and sign in with your own AlphaTheta account.
+
+       rekordbox-wine --install ~/Downloads/rekordbox_7.2.18.exe
+
+  2. Replug your controller so the new udev rule applies, and reboot (or
+     "sudo modprobe -r snd_seq_dummy") so the module blacklist takes effect.
+
+Then:
+
+       rekordbox-wine              launch
+       rekordbox-wine --check      verify every step, change nothing
+       /usr/share/rekordbox-wine/bin/verifyloaded.sh
+                                   confirm the RUNNING process really is using
+                                   the patched libraries
+
+WHAT WORKS, measured: the window renders and repaints (stock Wine paints one
+frame and freezes); library, waveforms and two decks at 1.000x; the File menu
+and EXPORT mode; DDJ-400 exclusive audio at 44100 Hz with jog wheels and LEDs;
+PC MASTER OUT with no dropouts; and USB export.
+
+NOT PROVEN: no exported stick has been read by a real CDJ, and the DDJ-400 has
+not been through a full performance pass. See GOLD-STATUS.md in
+/usr/share/doc/rekordbox-wine for every claim and its evidence.
+
+EOF
+}
+
+post_upgrade() {
+  cat <<'EOF'
+
+If you upgraded wine, the patched system files were overwritten by the wine
+package and must be reapplied:
+
+  /usr/share/rekordbox-wine/bin/build-patched-dlls.sh
+  /usr/share/rekordbox-wine/bin/make-private-wine.sh
+
+The private tree records which Wine version it was built against and
+`rekordbox-wine` rebuilds it automatically when that changes, so in most cases
+there is nothing to do.
+
+`rekordbox-wine --check` will tell you which of these is needed.
+
+EOF
+}
+
+post_remove() {
+  cat <<'EOF'
+
+Your system Wine was never modified, so there is nothing to revert.
+
+The private Wine tree and your prefix are under
+~/.local/share/rekordbox-wine and were left alone. Delete that directory if you
+want the disk space back.
+
+EOF
+}

@@ -1,0 +1,26 @@
+{
+  "name": "main-ui-liveness",
+  "note": "Targets the exact symptoms reported by hand on 2026-08-13: sidebar cut off and click-dead, top nav labels missing, library rows not selectable, tracks not draggable, settings pane inert. Coordinates are FRACTIONS of the window so the scenario survives a resize. Nothing here types text, so it is safe to run against a signed-in prefix.",
+  "steps": [
+    {"name": "settle", "action": "wait", "seconds": 3},
+
+    {"name": "hover-topnav", "action": "hover", "x": 0.5, "y": 0.03},
+    {"name": "hover-topnav-2", "action": "hover", "x": 0.65, "y": 0.03},
+
+    {"name": "click-sidebar-top", "action": "click", "x": 0.08, "y": 0.20},
+    {"name": "click-sidebar-mid", "action": "click", "x": 0.08, "y": 0.35},
+    {"name": "click-sidebar-low", "action": "click", "x": 0.08, "y": 0.50},
+
+    {"name": "click-library-row1", "action": "click", "x": 0.55, "y": 0.45},
+    {"name": "click-library-row2", "action": "click", "x": 0.55, "y": 0.50},
+    {"name": "keydown-arrow", "action": "key", "keys": "Down"},
+    {"name": "keydown-arrow-2", "action": "key", "keys": "Down"},
+
+    {"name": "drag-row-to-deck", "action": "drag", "x": 0.55, "y": 0.45, "x2": 0.35, "y2": 0.12},
+
+    {"name": "hover-deck-area", "action": "hover", "x": 0.35, "y": 0.15},
+    {"name": "click-browser-header", "action": "click", "x": 0.60, "y": 0.38},
+
+    {"name": "settle-final", "action": "wait", "seconds": 2}
+  ]
+}

@@ -1,0 +1,621 @@
+#!/usr/bin/env bash
+# rbw — rekordbox-under-Wine experiment harness
+# Every run is reproducible, self-describing, and machine-adjudicated.
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUNS="$ROOT/runs"
+PREFIXES="$ROOT/prefixes"
+ARTIFACTS="$ROOT/artifacts"
+RECIPES="$ROOT/recipes"
+INDEX="$RUNS/index.jsonl"
+
+die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+info() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[33mwarn:\033[0m %s\n' "$*" >&2; }
+ok()   { printf '\033[32m  ok\033[0m %s\n' "$*"; }
+bad()  { printf '\033[31m  no\033[0m %s\n' "$*"; }
+
+py() { python3 "$@"; }
+
+# ---------------------------------------------------------------- doctor
+
+REQUIRED_PKGS="wine-staging winetricks xdotool xorg-xwininfo imagemagick tesseract tesseract-data-eng jq dosfstools qt6-tools"
+
+cmd_doctor() {
+  local missing=() c
+  info "tooling"
+  for c in wine winetricks xdotool xwininfo magick tesseract jq qdbus6; do
+    if command -v "$c" >/dev/null; then ok "$c ($(command -v "$c"))"
+    else bad "$c"; missing+=("$c"); fi
+  done
+
+  info "environment"
+  [[ -n "${DISPLAY:-}" ]] && ok "DISPLAY=$DISPLAY (X11/XWayland path available)" || bad "DISPLAY unset"
+  [[ -n "${WAYLAND_DISPLAY:-}" ]] && ok "WAYLAND_DISPLAY=$WAYLAND_DISPLAY" || warn "no WAYLAND_DISPLAY"
+  if [[ -e /dev/ntsync ]]; then ok "/dev/ntsync present"
+  else warn "/dev/ntsync absent (module autoloads on first wine start; not an error yet)"; fi
+  command -v wine >/dev/null && ok "wine $(wine --version 2>/dev/null)"
+
+  info "disk"
+  df -h "$ROOT" | tail -1 | awk '{print "  " $4 " free on " $6}'
+
+  if ((${#missing[@]})); then
+    echo
+    warn "missing: ${missing[*]}"
+    echo "  sudo pacman -S --needed $REQUIRED_PKGS"
+    return 1
+  fi
+  echo; ok "ready"
+}
+
+# ---------------------------------------------------------------- recipes
+
+load_recipe() {
+  local r="$1" f="$RECIPES/$1.recipe"
+  [[ -f "$f" ]] || die "no recipe '$r' (looked in $f)"
+  # shellcheck disable=SC1090
+  RECIPE_NAME="$r"; source "$f"
+  RECIPE_HASH="$(sha256sum "$f" | cut -c1-12)"
+  : "${WINE_BIN:=wine}" "${WIN_VERSION:=win11}" "${WINETRICKS_VERBS:=}"
+  : "${HIDE_WINE_EXPORTS:=0}" "${WINE_DRIVER:=x11}" "${APP_GLOB:=}"
+  PREFIX="$PREFIXES/$r"
+}
+
+# Compose the environment a run executes under. Single source of truth.
+run_env() {
+  local -a e=(
+    "WINEPREFIX=$PREFIX"
+    "WINEARCH=win64"
+    "WINEDEBUG=${WINEDEBUG_SPEC:-+syscall,+loaddll,+seh}"
+    "WINEDLLOVERRIDES=${WINEDLLOVERRIDES:-}"
+  )
+  # winewayland.drv loses to X11 whenever DISPLAY is set. Forcing the wayland
+  # driver therefore means *unsetting* DISPLAY, not setting a flag.
+  if [[ "$WINE_DRIVER" == "wayland" ]]; then e+=("DISPLAY="); fi
+  printf '%s\n' "${e[@]}"
+}
+
+# ---------------------------------------------------------------- prefix
+
+cmd_prefix() {
+  local r="${1:-}"; [[ -n "$r" ]] || die "usage: rbw prefix <recipe> [--rebuild]"
+  load_recipe "$r"
+  if [[ "${2:-}" == "--rebuild" ]]; then info "removing $PREFIX"; rm -rf "$PREFIX"; fi
+  if [[ -d "$PREFIX" ]]; then ok "prefix exists: $PREFIX"; return 0; fi
+
+  mkdir -p "$PREFIXES"
+  info "creating prefix $PREFIX (win64, recipe $RECIPE_NAME@$RECIPE_HASH)"
+  # Disable mscoree/mshtml for the boot itself: with wine-mono/wine-gecko absent,
+  # Wine otherwise raises a download dialog that blocks unattended runs forever.
+  # If the packages are installed the override is inert here and Wine picks them
+  # up normally afterwards.
+  env WINEPREFIX="$PREFIX" WINEARCH=win64 WINEDLLOVERRIDES="mscoree,mshtml=d" \
+      timeout 180 "$WINE_BIN"boot -u >/dev/null 2>&1 \
+    || die "wineboot failed or timed out"
+  if ! pacman -Qq wine-mono >/dev/null 2>&1; then
+    warn "wine-mono not installed — this prefix has no .NET. Fine for controls;"
+    warn "install it before building an app prefix, or .NET failures will be a confound."
+  fi
+
+  if [[ -n "$WINETRICKS_VERBS" ]]; then
+    info "winetricks -q $WINETRICKS_VERBS"
+    env WINEPREFIX="$PREFIX" winetricks -q $WINETRICKS_VERBS >"$PREFIX/.winetricks.log" 2>&1 \
+      || warn "winetricks reported failure; see $PREFIX/.winetricks.log"
+  fi
+
+  info "setting windows version: $WIN_VERSION"
+  env WINEPREFIX="$PREFIX" winetricks -q "$WIN_VERSION" >/dev/null 2>&1 || warn "could not set $WIN_VERSION"
+
+  if [[ "$HIDE_WINE_EXPORTS" == "1" ]]; then
+    info "enabling wine-staging HideWineExports"
+    env WINEPREFIX="$PREFIX" "$WINE_BIN" reg add 'HKCU\Software\Wine' \
+      /v HideWineExports /t REG_SZ /d Y /f >/dev/null 2>&1 \
+      || warn "could not set HideWineExports (is this wine-staging?)"
+  fi
+
+  echo "$RECIPE_HASH" > "$PREFIX/.recipe-hash"
+  ok "prefix ready"
+}
+
+cmd_install() {
+  local r="${1:-}"; [[ -n "$r" ]] || die "usage: rbw install <recipe>"
+  load_recipe "$r"
+  mkdir -p "$ARTIFACTS"
+
+  # Prefer a locally-supplied installer (the reproducible case); fall back to
+  # the CDN only if the recipe names a URL and nothing local matches.
+  local zip=""
+  if [[ -n "${RB_INSTALLER_FILE:-}" && -f "$ARTIFACTS/$RB_INSTALLER_FILE" ]]; then
+    zip="$ARTIFACTS/$RB_INSTALLER_FILE"
+  elif [[ -n "${RB_INSTALLER_URL:-}" ]]; then
+    zip="$ARTIFACTS/$(basename "$RB_INSTALLER_URL")"
+    if [[ ! -f "$zip" ]]; then
+      info "downloading $(basename "$zip")"
+      curl -fL --progress-bar -o "$zip.part" "$RB_INSTALLER_URL" || die "download failed"
+      mv "$zip.part" "$zip"
+    fi
+  else
+    die "no installer: set RB_INSTALLER_FILE (in $ARTIFACTS/) or RB_INSTALLER_URL in recipes/$r.recipe"
+  fi
+
+  # Provenance. A silently-swapped installer would invalidate every run that
+  # cites this recipe, so pin it.
+  if [[ -n "${RB_INSTALLER_SHA256:-}" ]]; then
+    local got; got="$(sha256sum "$zip" | cut -d' ' -f1)"
+    if [[ "$got" != "$RB_INSTALLER_SHA256" ]]; then
+      die "installer sha256 mismatch
+  expected $RB_INSTALLER_SHA256
+  got      $got"
+    fi
+    ok "sha256 verified against recipe"
+  else
+    warn "recipe pins no RB_INSTALLER_SHA256; this installer is $(sha256sum "$zip" | cut -d' ' -f1)"
+  fi
+  ok "installer: $zip ($(du -h "$zip" | cut -f1))"
+  local dir="${zip%.zip}"
+  [[ -d "$dir" ]] || { info "extracting"; mkdir -p "$dir"; unzip -q -o "$zip" -d "$dir"; }
+  local exe; exe="$(find "$dir" -iname '*.exe' | head -1)"
+  [[ -n "$exe" ]] || die "no .exe found in $dir"
+  info "running installer under wine — THIS NEEDS YOUR CLICKS"
+  echo "  installer: $exe"
+  env $(run_env | tr '\n' ' ') "$WINE_BIN" "$exe"
+  ok "installer exited; run 'rbw find-app $r' to locate rekordbox.exe"
+}
+
+cmd_find_app() {
+  local r="${1:-}"; [[ -n "$r" ]] || die "usage: rbw find-app <recipe>"
+  load_recipe "$r"
+  find "$PREFIX/drive_c" -iname 'rekordbox.exe' 2>/dev/null | while read -r p; do
+    echo "  $p"
+  done
+}
+
+# ---------------------------------------------------------------- oracle
+# Adjudicates a GUI that may render nothing.
+#
+# Capture goes through SPECTACLE (KWin), not import/xwd/x11grab. Measured on
+# this machine 2026-08-12: ImageMagick's `import` is broken in 7.1.2-29 (fails
+# with "missing an image filename" even given an explicit display), and
+# crucially `ffmpeg -f x11grab` of the XWayland root returns stddev 0.0 — pure
+# black — because the root holds no composited content and X11 toplevels are
+# redirected. Any X-side grabber would therefore have reported `blank-window`
+# for perfectly healthy windows. Spectacle asks the compositor for what is
+# actually on screen, so it is correct for the winewayland driver too, where no
+# X window exists at all.
+
+# $1 png -> "stddev mean entropy"
+img_stats() {
+  magick "$1" -colorspace Gray -format '%[fx:standard_deviation] %[fx:mean] %[entropy]' info: 2>/dev/null \
+    || echo "0 0 0"
+}
+
+# Tesseract returns NOTHING on native-resolution desktop UI text — measured
+# 2026-08-12: a notepad capture OCR'd to zero characters raw, and to
+# "Untitled - Notepad / File Edit Format View Help" at 3x + sharpen. Without the
+# upscale every text assertion fails open, which is exactly how the first
+# selftest mistakenly concluded that synthetic typing was broken.
+ocr() {
+  local up="${TMPDIR:-/tmp}/rbw-ocr-$$.png"
+  magick "$1" -colorspace Gray -resize 300% -sharpen 0x1 -normalize "$up" 2>/dev/null || return 0
+  tesseract "$up" stdout 2>/dev/null | tr -s '[:space:]' ' ' | sed 's/^ *//;s/ *$//'
+  rm -f "$up"
+}
+
+# Visible-window set, used to spot windows that appeared since launch.
+snapshot_windows() { xdotool search --onlyvisible --name '.' 2>/dev/null | sort -u; }
+WIN_BEFORE=""
+
+# Locate the app's window. NOT by the launcher pid: we background a subshell, so
+# $! is the subshell while the window's _NET_WM_PID is the wine child (measured
+# 2026-08-12: subshell 70157 vs notepad window pid 70235). Wine sets WM_CLASS
+# from the exe name, which is stable and cheap to match; a diff against the
+# pre-launch window set is the app-agnostic backstop.
+# $1 = class hint (exe basename, no extension)
+find_window() {
+  local hint="$1" wid=""
+  if [[ -n "$hint" ]]; then
+    wid="$(xdotool search --onlyvisible --class "$hint" 2>/dev/null | tail -1)"
+    [[ -z "$wid" ]] && wid="$(xdotool search --onlyvisible --classname "$hint" 2>/dev/null | tail -1)"
+  fi
+  if [[ -z "$wid" ]]; then
+    wid="$(comm -13 <(printf '%s\n' "$WIN_BEFORE") <(snapshot_windows) 2>/dev/null | tail -1)"
+  fi
+  echo "$wid"
+}
+
+# Last capture method used, recorded per sample so a mis-capture is diagnosable
+# after the fact rather than being mistaken for an application behaviour.
+SNAP_METHOD="none"
+
+snap() { # $1 wid (may be empty), $2 outfile
+  local wid="$1" out="$2"
+  rm -f "$out"
+
+  # Preferred: focus the target, confirm it really is focused, capture just it.
+  # Without the confirmation we would happily screenshot the terminal that
+  # launched the run and OCR our own command line back as "app output".
+  if [[ -n "$wid" ]]; then
+    xdotool windowactivate --sync "$wid" 2>/dev/null
+    sleep 0.4
+    local active; active="$(xdotool getactivewindow 2>/dev/null)"
+    if [[ "$active" == "$wid" ]]; then
+      if timeout 20 spectacle -a -b -n -o "$out" >/dev/null 2>&1 && [[ -s "$out" ]]; then
+        SNAP_METHOD="spectacle-active"; return 0
+      fi
+    fi
+  fi
+
+  # Fallback: full screen, but ONLY when we can crop it down to the window.
+  # An uncropped desktop grab is both useless for adjudication and a privacy
+  # problem — it photographs whatever else is on screen, every poll, and OCRs
+  # it into the run log. Opt in explicitly with ALLOW_FULLSCREEN_CAPTURE=1.
+  if [[ -n "$wid" ]] || [[ "${ALLOW_FULLSCREEN_CAPTURE:-0}" == "1" ]]; then
+    if timeout 20 spectacle -f -b -n -o "$out" >/dev/null 2>&1 && [[ -s "$out" ]]; then
+      SNAP_METHOD="spectacle-full"
+      if [[ -n "$wid" ]]; then
+        local geo
+        geo="$(xdotool getwindowgeometry --shell "$wid" 2>/dev/null)"
+        if [[ -n "$geo" ]]; then
+          local X= Y= WIDTH= HEIGHT=
+          eval "$geo" 2>/dev/null
+          if [[ -n "$WIDTH" && -n "$HEIGHT" && "$WIDTH" -gt 0 && "$HEIGHT" -gt 0 ]]; then
+            magick "$out" -crop "${WIDTH}x${HEIGHT}+${X}+${Y}" +repage "$out" 2>/dev/null \
+              && SNAP_METHOD="spectacle-full-cropped"
+          fi
+        fi
+      fi
+      # Never retain an uncropped desktop grab.
+      if [[ "$SNAP_METHOD" == "spectacle-full" && "${ALLOW_FULLSCREEN_CAPTURE:-0}" != "1" ]]; then
+        rm -f "$out"; SNAP_METHOD="no-window-isolated"; return 1
+      fi
+      return 0
+    fi
+  fi
+
+  SNAP_METHOD="no-window-isolated"; return 1
+}
+
+# ---------------------------------------------------------------- run
+
+cmd_run() {
+  local recipe="" label="run" timeout=90 probe_input=1 poll=10 app_override=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --recipe) recipe="$2"; shift 2;;
+      --label)  label="$2"; shift 2;;
+      --timeout) timeout="$2"; shift 2;;
+      --poll)   poll="$2"; shift 2;;
+      --app)    app_override="$2"; shift 2;;
+      --no-input) probe_input=0; shift;;
+      --debug)  export WINEDEBUG_SPEC="$2"; shift 2;;
+      --driver) export FORCE_DRIVER="$2"; shift 2;;
+      *) die "unknown arg: $1";;
+    esac
+  done
+  [[ -n "$recipe" ]] || die "usage: rbw run --recipe <r> [--label L] [--timeout S] [--app EXE] [--debug SPEC] [--driver x11|wayland] [--no-input]"
+  load_recipe "$recipe"
+  [[ -n "${FORCE_DRIVER:-}" ]] && WINE_DRIVER="$FORCE_DRIVER"
+  [[ -d "$PREFIX" ]] || die "no prefix; run: rbw prefix $recipe"
+
+  local app
+  if [[ -n "$app_override" ]]; then
+    app="$app_override"
+  else
+    app="$(find "$PREFIX/drive_c" -iname 'rekordbox.exe' 2>/dev/null | head -1)"
+    [[ -n "$app" ]] || die "rekordbox.exe not found in prefix; run: rbw install $recipe"
+  fi
+
+  local rid; rid="$(date +%Y%m%dT%H%M%S)-$recipe-$label"
+  local R="$RUNS/$rid"; mkdir -p "$R/shots"
+  info "run $rid"
+  echo "  app:    $app"
+  echo "  driver: $WINE_DRIVER   debug: ${WINEDEBUG_SPEC:-+syscall,+loaddll,+seh}"
+
+  # manifest — everything needed to reproduce this exact run
+  py - "$R" "$recipe" "$RECIPE_HASH" "$app" "$WINE_DRIVER" <<'PY'
+import json,os,subprocess,sys,platform
+R,recipe,rhash,app,driver=sys.argv[1:6]
+def sh(c):
+    try: return subprocess.run(c,shell=True,capture_output=True,text=True,timeout=10).stdout.strip()
+    except Exception: return ""
+json.dump({
+ "run_id":os.path.basename(R),"recipe":recipe,"recipe_hash":rhash,"app":app,"driver":driver,
+ "wine_version":sh("wine --version"),
+ "wine_pkg":sh("pacman -Q wine-staging wine 2>/dev/null"),
+ "kernel":platform.release(),
+ "mesa":sh("pacman -Q mesa 2>/dev/null"),
+ "git_sha":sh("git -C '%s/../..' rev-parse --short HEAD"%R),
+ "winedebug":os.environ.get("WINEDEBUG_SPEC","+syscall,+loaddll,+seh"),
+ # The run's actual DLL overrides. Omitting this made a run that differs from
+ # the baseline ONLY by an override indistinguishable from the baseline in its
+ # own manifest — i.e. the one variable under test went unrecorded.
+ "winedlloverrides":os.environ.get("WINEDLLOVERRIDES",""),
+ "started":sh("date -Is"),
+},open(os.path.join(R,"manifest.json"),"w"),indent=1)
+PY
+
+  # Window-set snapshot BEFORE launch, so "what appeared since" is meaningful.
+  WIN_BEFORE="$(snapshot_windows)"
+  local hint; hint="$(basename "$app")"; hint="${hint%.exe}"; hint="${hint%.EXE}"
+  echo "  wmclass hint: $hint"
+
+  # launch
+  local appdir; appdir="$(dirname "$app")"
+  ( cd "$appdir" && env $(run_env | tr '\n' ' ') "$WINE_BIN" "$app" ) \
+      >"$R/wine.log" 2>&1 &
+  local wpid=$!
+  echo "$wpid" > "$R/pid"
+
+  local wid="" t=0 exited=0
+  local token="RBWPROBE$(date +%s | tr -d '\n' | tail -c 4)"
+  : > "$R/timeline.tsv"
+
+  while (( t < timeout )); do
+    sleep "$poll"; t=$((t+poll))
+    if ! kill -0 "$wpid" 2>/dev/null; then exited=1; fi
+    [[ -z "$wid" ]] && wid="$(find_window "$hint")"
+    local shot="$R/shots/t$(printf '%03d' $t).png"
+    snap "$wid" "$shot"
+    local stats="0 0 0" text=""
+    if [[ -f "$shot" ]]; then stats="$(img_stats "$shot")"; text="$(ocr "$shot")"; fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$t" "${wid:--}" "$exited" "$stats" "${text:0:120}" "$SNAP_METHOD" >> "$R/timeline.tsv"
+    printf '  t=%-4s win=%-10s stddev=%-8s [%s] %s\n' "$t" "${wid:--}" \
+      "$(echo "$stats"|cut -d' ' -f1|cut -c1-6)" "$SNAP_METHOD" "${text:0:50}"
+    (( exited )) && break
+  done
+
+  # Synthetic input probe — directly tests the published 7.2.14 failure mode.
+  #
+  # OCR of a screenshot is NOT a sound oracle for "did the app accept input",
+  # and believing it cost us a wrong verdict on the first rekordbox baseline
+  # (20260812T201002 said `no-input`; run 20260813T062048 recovered the very
+  # token it claimed was never accepted). A window that renders one frame and
+  # never presents again is indistinguishable, on screen, from one that drops
+  # every keystroke. So the authoritative oracle now reads the text back OUT of
+  # the app via select-all/copy and Wine's clipboard bridge, and OCR is kept
+  # only to tell "accepted AND echoed" apart from "accepted but never redrawn".
+  local input_echoed="skipped"
+  if (( probe_input )) && [[ -n "$wid" ]] && ! (( exited )); then
+    info "input probe: clicking into the window, typing '$token'"
+    xdotool windowactivate --sync "$wid" 2>/dev/null; sleep 1
+
+    # Click into the window before typing. Tab alone does not focus an input on
+    # a dialog whose first control is not a text field.
+    local gx= gy= geo2
+    geo2="$(xdotool getwindowgeometry --shell "$wid" 2>/dev/null)"
+    if [[ -n "$geo2" ]]; then
+      local X= Y= WIDTH= HEIGHT=; eval "$geo2" 2>/dev/null
+      if [[ -n "${WIDTH:-}" && -n "${HEIGHT:-}" ]]; then
+        gx=$(( WIDTH * 2 / 3 )); gy=$(( HEIGHT * 2 / 5 ))
+        xdotool mousemove --window "$wid" "$gx" "$gy" click 1 2>/dev/null; sleep 1
+      fi
+    fi
+    [[ -n "$gx" ]] || { xdotool key --clearmodifiers Tab 2>/dev/null; sleep 0.3; }
+    xdotool type --clearmodifiers --delay 80 "$token" 2>/dev/null; sleep 1.5
+
+    # Oracle 1 (visual): did it appear on screen?
+    snap "$wid" "$R/shots/input-after.png"
+    local after=""; [[ -f "$R/shots/input-after.png" ]] && after="$(ocr "$R/shots/input-after.png")"
+    echo "$after" > "$R/ocr-after-input.txt"
+    local echoed=0; grep -qiF "${token:0:8}" <<<"$after" && echoed=1
+
+    # Oracle 2 (authoritative): read it back out of the app. The sentinel proves
+    # the clipboard was actually written rather than merely holding stale text.
+    local accepted=0 sentinel="RBW-SENTINEL-$$-$RANDOM" clipped=""
+    if command -v qdbus6 >/dev/null 2>&1; then
+      qdbus6 org.kde.klipper /klipper setClipboardContents "$sentinel" >/dev/null 2>&1; sleep 0.8
+      xdotool windowactivate --sync "$wid" 2>/dev/null; sleep 0.5
+      xdotool key --clearmodifiers ctrl+a 2>/dev/null; sleep 0.6
+      xdotool key --clearmodifiers ctrl+c 2>/dev/null; sleep 1.5
+      clipped="$(qdbus6 org.kde.klipper /klipper getClipboardContents 2>/dev/null)"
+      printf '%s' "$clipped" > "$R/clipboard-after-input.txt"
+      [[ "$clipped" != "$sentinel" ]] && grep -qiF "${token:0:8}" <<<"$clipped" && accepted=1
+    else
+      warn "qdbus6 absent — cannot read input back out of the app; OCR only"
+    fi
+
+    if (( accepted && echoed )); then
+      input_echoed="yes"; ok "keystrokes accepted and echoed"
+    elif (( accepted )); then
+      input_echoed="accepted-not-echoed"
+      bad "keystrokes ACCEPTED but never redrawn — presentation fault, not input"
+    elif (( echoed )); then
+      input_echoed="yes"; ok "keystrokes echoed"
+    else
+      input_echoed="no"; bad "keystrokes neither echoed nor recoverable"
+    fi
+  fi
+
+  # Teardown, gently first. SIGKILLing a GUI app mid-write truncates whatever it
+  # was saving: rekordbox greeted the first real user session with "The
+  # configuration file cannot be read. Restart with a backup file." after ~15
+  # runs that all ended in kill -9. Ask the window to close, then escalate.
+  if kill -0 "$wpid" 2>/dev/null; then
+    info "terminating (graceful close first)"
+    if [[ -n "$wid" ]]; then
+      xdotool windowclose "$wid" 2>/dev/null      # WM_CLOSE — lets it save state
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$wpid" 2>/dev/null || break
+        sleep 1
+      done
+    fi
+    if kill -0 "$wpid" 2>/dev/null; then
+      warn "did not close on request; sending TERM"
+      kill "$wpid" 2>/dev/null
+      sleep 3
+    fi
+    if kill -0 "$wpid" 2>/dev/null; then
+      warn "still alive; sending KILL (may corrupt app state)"
+      kill -9 "$wpid" 2>/dev/null
+    fi
+  fi
+  wait "$wpid" 2>/dev/null; local rc=$?
+  env WINEPREFIX="$PREFIX" wineserver -k 2>/dev/null
+
+  cmd_classify "$rid" >/dev/null
+  py "$ROOT/bin/verdict.py" "$R" "$input_echoed" "$rc"
+  py "$ROOT/bin/verdict.py" "$R" "$input_echoed" "$rc" --index >> "$INDEX"
+  echo
+  info "evidence: $R"
+  cat "$R/verdict.txt"
+}
+
+# ---------------------------------------------------------------- classify
+
+cmd_classify() {
+  local rid="${1:-}"; [[ -n "$rid" ]] || die "usage: rbw classify <run-id>"
+  local R="$RUNS/$rid"; [[ -d "$R" ]] || die "no run $rid"
+  py "$ROOT/bin/classify.py" "$R/wine.log" "$R"
+  cat "$R/classify.md"
+}
+
+cmd_diff() {
+  local a="${1:-}" b="${2:-}"; [[ -n "$b" ]] || die "usage: rbw diff <runA> <runB>"
+  py "$ROOT/bin/classify.py" --normalise "$RUNS/$a/wine.log" > /tmp/rbw-a.txt
+  py "$ROOT/bin/classify.py" --normalise "$RUNS/$b/wine.log" > /tmp/rbw-b.txt
+  info "normalised diff: $a -> $b"
+  diff -u /tmp/rbw-a.txt /tmp/rbw-b.txt | head -200 || true
+}
+
+# ---------------------------------------------------------------- matrix
+
+cmd_matrix() {
+  local f="${1:-}"; [[ -f "$f" ]] || die "usage: rbw matrix <file>  (one 'rbw run' arg-line per row, # comments ok)"
+  local n=0
+  while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    n=$((n+1))
+    info "matrix row $n: $line"
+    # shellcheck disable=SC2086
+    cmd_run $line || warn "row $n failed; continuing"
+    sleep 3
+  done < "$f"
+  ok "matrix complete: $n rows"
+  cmd_status
+}
+
+# ---------------------------------------------------------------- selftest
+# Calibrates the oracle against known-good Win32 apps, through the IDENTICAL
+# code path used for rekordbox. Without this, a `no-input` verdict is
+# indistinguishable from a broken harness, and BLANK_STDDEV is a guess.
+
+cmd_selftest() {
+  info "building control prefix"
+  cmd_prefix control >/dev/null || die "control prefix failed"
+
+  info "control 1/2: winecfg — should render dense content (high stddev)"
+  cmd_run --recipe control --label ctl-winecfg --app winecfg \
+          --timeout 20 --poll 10 --no-input --debug -all >/dev/null 2>&1 || true
+
+  info "control 2/2: notepad — should render AND echo typed text"
+  cmd_run --recipe control --label ctl-notepad --app notepad \
+          --timeout 20 --poll 10 --debug -all >/dev/null 2>&1 || true
+
+  echo
+  py - "$RUNS" <<'PY'
+import glob, json, os, sys
+runs = sys.argv[1]
+def latest(tag):
+    m = sorted(glob.glob(os.path.join(runs, f"*-control-{tag}")))
+    return json.load(open(os.path.join(m[-1], "verdict.json"))) if m else None
+
+cfg, npd = latest("ctl-winecfg"), latest("ctl-notepad")
+print("── ORACLE CALIBRATION ─────────────────────────────")
+fail = []
+for name, v, want_input in (("winecfg", cfg, False), ("notepad", npd, True)):
+    if not v:
+        print(f"  {name:<9} NO RESULT"); fail.append(name); continue
+    print(f"  {name:<9} verdict={v['verdict']:<15} stddev={v['peak_stddev']:<9} "
+          f"window={v['saw_window']} input={v['input_echoed']}")
+    if not v["saw_window"]:
+        fail.append(f"{name}: no window — xdotool/import cannot see Wine windows")
+    if want_input and v["input_echoed"] != "yes":
+        fail.append(f"{name}: typing not echoed — synthetic input or OCR is broken")
+
+if cfg and npd and cfg["saw_window"] and npd["saw_window"]:
+    lo = min(cfg["peak_stddev"], npd["peak_stddev"])
+    print(f"\n  lowest stddev across two KNOWN-GOOD windows: {lo}")
+    if lo < 0.02:
+        print(f"  !! BLANK_STDDEV=0.02 would misjudge a real window as blank.")
+        print(f"     Lower it to about {max(lo/3, 0.001):.4f} in bin/verdict.py before trusting any verdict.")
+    else:
+        print(f"  BLANK_STDDEV=0.02 is safely below both. Threshold OK.")
+
+print()
+if fail:
+    print("  RESULT: oracle NOT trustworthy yet ->", "; ".join(fail))
+    sys.exit(1)
+print("  RESULT: oracle validated. A `no-input` or `blank-window` verdict now means the app, not us.")
+PY
+}
+
+# ---------------------------------------------------------------- journal
+
+cmd_journal() {
+  local msg="$*"; [[ -n "$msg" ]] || die "usage: rbw journal <message>"
+  local last; last="$(tail -1 "$INDEX" 2>/dev/null | py -c 'import sys,json;print(json.loads(sys.stdin.read() or "{}").get("run_id",""))' 2>/dev/null)"
+  { echo; echo "### $(date -Is)"; [[ -n "$last" ]] && echo "_last run: \`$last\`_"; echo; echo "$msg"; } >> "$ROOT/JOURNAL.md"
+  ok "appended to JOURNAL.md"
+}
+
+cmd_status() {
+  echo "── STATE ──────────────────────────────────────────"
+  sed -n '1,40p' "$ROOT/STATE.md" 2>/dev/null
+  echo
+  echo "── last 10 runs ───────────────────────────────────"
+  if [[ -s "$INDEX" ]]; then
+    tail -10 "$INDEX" | py -c '
+import sys, json
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        d = json.loads(line)
+    except Exception:
+        continue
+    v = d.get("verdict", "?")
+    r = d.get("run_id", "?")
+    h = d.get("headline", "")[:52]
+    print("  %-16s %-44s %s" % (v, r, h))
+'
+  else
+    echo "  (none yet)"
+  fi
+}
+
+# ---------------------------------------------------------------- main
+
+case "${1:-help}" in
+  doctor)   shift; cmd_doctor "$@";;
+  selftest) shift; cmd_selftest "$@";;
+  prefix)   shift; cmd_prefix "$@";;
+  install)  shift; cmd_install "$@";;
+  find-app) shift; cmd_find_app "$@";;
+  run)      shift; cmd_run "$@";;
+  classify) shift; cmd_classify "$@";;
+  diff)     shift; cmd_diff "$@";;
+  matrix)   shift; cmd_matrix "$@";;
+  journal)  shift; cmd_journal "$@";;
+  status)   shift; cmd_status "$@";;
+  *) cat <<EOF
+rbw — rekordbox-under-Wine experiment harness
+
+  rbw doctor                     check tooling and environment
+  rbw selftest                   calibrate the oracle against winecfg + notepad (run first)
+  rbw prefix <recipe> [--rebuild]  build a wine prefix from a recipe
+  rbw install <recipe>           download + run the rekordbox installer (needs your clicks)
+  rbw find-app <recipe>          locate rekordbox.exe inside the prefix
+  rbw run --recipe <r> [opts]    run one adjudicated experiment
+       --label L --timeout S --poll S --app EXE --debug SPEC --driver x11|wayland --no-input
+  rbw matrix <file>              run many experiments unattended
+  rbw classify <run-id>          triage a run's wine.log
+  rbw diff <runA> <runB>         normalised log diff between two runs
+  rbw journal <message>          append a timestamped note to JOURNAL.md
+  rbw status                     current state + recent runs
+
+recipes: $(ls "$RECIPES" 2>/dev/null | sed 's/\.recipe//' | tr '\n' ' ')
+EOF
+  ;;
+esac

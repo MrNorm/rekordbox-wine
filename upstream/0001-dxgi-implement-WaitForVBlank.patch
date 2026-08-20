@@ -1,0 +1,114 @@
+Subject: [PATCH 1/5] dxgi: implement IDXGIOutput::WaitForVBlank
+
+The method was a stub returning E_NOTIMPL. Toolkits that drive repaints from a
+vblank listener rather than from WM_PAINT therefore never get a tick: the call
+fails instantly, the vblank thread free-runs (measured at ~860 calls/second),
+and nothing is ever told to repaint. The window paints once at creation and
+then freezes while remaining fully alive and accepting input.
+
+Approximate the wait from the output's refresh rate. Without this, rekordbox
+7.2.17 renders one frame and never another.
+
+---
+--- a/dlls/dxgi/output.c
++++ b/dlls/dxgi/output.c
+@@ -16,6 +16,8 @@
+  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
+  */
+ 
++#include <stdarg.h>
++#include "winternl.h"
+ #include "dxgi_private.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(dxgi);
+@@ -364,13 +366,87 @@
+ static HRESULT STDMETHODCALLTYPE dxgi_output_WaitForVBlank(IDXGIOutput6 *iface)
+ {
+     static BOOL once = FALSE;
++    LARGE_INTEGER freq, now;
++    LONGLONG period, remaining;
++    DWORD refresh = 60, ms;
++    DEVMODEW mode;
+ 
+     if (!once++)
+-        FIXME("iface %p stub!\n", iface);
++        FIXME("RBW-PATCH iface %p: approximating vblank wait.\n", iface);
+     else
+-        TRACE("iface %p stub!\n", iface);
++        TRACE("iface %p.\n", iface);
+ 
+-    return E_NOTIMPL;
++    /* Returning E_NOTIMPL here starves any caller that drives its frame clock
++     * from this call: it never blocks, so the caller spins and, because the
++     * call failed, never treats it as a vblank tick. Sleeping to the next
++     * estimated refresh boundary is not exact, but it is enormously closer to
++     * the contract than returning immediately. */
++    memset(&mode, 0, sizeof(mode));
++    mode.dmSize = sizeof(mode);
++    if (EnumDisplaySettingsW(NULL, ENUM_CURRENT_SETTINGS, &mode)
++            && (mode.dmFields & DM_DISPLAYFREQUENCY) && mode.dmDisplayFrequency > 1)
++        refresh = mode.dmDisplayFrequency;
++
++    QueryPerformanceFrequency(&freq);
++    QueryPerformanceCounter(&now);
++
++    if (!freq.QuadPart || !(period = freq.QuadPart / refresh))
++        return S_OK;
++
++    /* Round the wait UP. Truncating wakes us just *before* the boundary, so the
++     * next call finds almost no time remaining and returns immediately, and the
++     * caller ends up ticking at roughly twice the refresh rate. */
++    remaining = period - (now.QuadPart % period);
++
++    /* RBW-VBLANK2: frame-rate instrumentation and a precise wait.
++     *
++     * Sleep() takes WHOLE MILLISECONDS. A 60 Hz frame is 16.67 ms, so every
++     * wait was quantised to 16 or 17 ms and rounded up, and Sleep's own
++     * granularity is coarser still. JUCE drives every repaint from this call,
++     * so that quantisation IS the frame pacing -- the user reported the
++     * waveform rendering "very lumpy, unworkable".
++     *
++     * NtDelayExecution takes a 100ns relative timeout, removing the
++     * quantisation entirely. RBW_VBLANK_SLEEP=1 restores the old Sleep() path
++     * so the two can be compared without a rebuild.
++     *
++     * RBW_VBLANK_STATS=1 reports the achieved rate, which is the only honest
++     * way to answer "what FPS is the UI actually getting". */
++    {
++        static LONGLONG stat_start;
++        static unsigned int stat_calls;
++
++        if (getenv("RBW_VBLANK_STATS"))
++        {
++            if (!stat_start) stat_start = now.QuadPart;
++            if (++stat_calls >= 120)
++            {
++                double secs = (double)(now.QuadPart - stat_start) / freq.QuadPart;
++                if (secs > 0.0)
++                    ERR("RBW-VBLANK2 rate: %.1f frames/sec over %u frames (target %u)\n",
++                        stat_calls / secs, stat_calls, refresh);
++                stat_calls = 0;
++                stat_start = now.QuadPart;
++            }
++        }
++    }
++
++    if (getenv("RBW_VBLANK_SLEEP"))
++    {
++        ms = (DWORD)((remaining * 1000 + freq.QuadPart - 1) / freq.QuadPart);
++        Sleep(ms ? ms : 1);
++    }
++    else
++    {
++        LARGE_INTEGER delay;
++
++        /* negative == relative, in 100ns units */
++        delay.QuadPart = -((remaining * 10000000) / freq.QuadPart);
++        if (delay.QuadPart == 0) delay.QuadPart = -1;
++        NtDelayExecution(FALSE, &delay);
++    }
++
++    return S_OK;
+ }
+ 
+ static HRESULT STDMETHODCALLTYPE dxgi_output_TakeOwnership(IDXGIOutput6 *iface, IUnknown *device, BOOL exclusive)

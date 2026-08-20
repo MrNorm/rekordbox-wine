@@ -1,0 +1,166 @@
+Subject: [PATCH] mountmgr: publish removable volumes as GUID_DEVCLASS_VOLUME
+ device nodes
+
+An application that wants to know which drive letter belongs to which device
+does what Windows documents: enumerate the volume device class, read
+SPDRP_PHYSICAL_DEVICE_OBJECT_NAME from each device, and match it against
+QueryDosDevice() for each letter. Under Wine the first enumeration is always
+empty, so the match can never succeed and a removable device is invisible
+however correct GetDriveType() is.
+
+Measured with rekordbox 7.2.18, whose USB export browser performs exactly that
+join: with these entries present its device list populates, it initialises the
+stick and exports to it; without them the list is empty.
+
+setupapi's device-class enumeration is registry-driven -- it walks
+HKLM\SYSTEM\CurrentControlSet\Enum and matches ClassGUID -- so this needs no PnP
+device object and no bus driver. The name written is the same UNICODE_STRING
+that add_dosdev_mount_point() points \DosDevices\X: at, which is exactly what
+QueryDosDevice() returns, so the join key matches by construction.
+
+The entries are volatile, written when a drive's volume information is set and
+removed when the drive goes, and only for the types GetDriveType reports as
+DRIVE_REMOVABLE.
+
+Depends on the companion setupapi change that makes
+SPDRP_PHYSICAL_DEVICE_OBJECT_NAME readable at all.
+
+---
+--- a/dlls/mountmgr.sys/device.c
++++ b/dlls/mountmgr.sys/device.c
+@@ -98,6 +98,8 @@
+ static struct list drives_list = LIST_INIT(drives_list);
+ static struct list volumes_list = LIST_INIT(volumes_list);
+ 
++static void rbw_delete_volume_devnode( int letter );   /* RBW-VOLNODE, defined below */
++
+ static DRIVER_OBJECT *harddisk_driver;
+ static DRIVER_OBJECT *serial_driver;
+ static DRIVER_OBJECT *parallel_driver;
+@@ -812,6 +814,7 @@
+ /* delete the disk device for a given drive */
+ static void delete_dos_device( struct dos_drive *drive )
+ {
++    rbw_delete_volume_devnode( drive->drive );   /* RBW-VOLNODE */
+     list_remove( &drive->entry );
+     if (drive->mount) delete_mount_point( drive->mount );
+     release_volume( drive->volume );
+@@ -945,6 +948,109 @@
+ }
+ 
+ /* change the information for an existing volume */
++/* RBW-VOLNODE ------------------------------------------------------------
++ *
++ * Publish each removable volume as a GUID_DEVCLASS_VOLUME device node, so that
++ * SetupDiGetClassDevs(&GUID_DEVCLASS_VOLUME, DIGCF_PRESENT) returns it.
++ *
++ * WHY. An application that wants to know which drive letter belongs to which
++ * device does what Windows documents: enumerate the volume device class, read
++ * SPDRP_PHYSICAL_DEVICE_OBJECT_NAME from each device, and match that against
++ * QueryDosDevice() for each letter. Under Wine the first enumeration was always
++ * empty, so the match could never succeed and the device was invisible however
++ * correct GetDriveType() was.
++ *
++ * Measured with rekordbox 7.2.18, whose USB export browser does exactly that
++ * join: with these entries present its device list populates and it exports to
++ * the stick; without them the list is empty.
++ *
++ * setupapi's device-class enumeration is registry-driven, so this needs no PnP
++ * device object. The name written here is the same UNICODE_STRING that
++ * add_dosdev_mount_point() points \DosDevices\X: at, which is exactly what
++ * QueryDosDevice() returns.
++ */
++static void rbw_volume_devnode_path( WCHAR *path, size_t len, int letter )
++{
++    swprintf( path, len, L"SYSTEM\\CurrentControlSet\\Enum\\STORAGE\\Volume\\WineVolume%c",
++              (WCHAR)('A' + letter) );
++}
++
++static void rbw_delete_volume_devnode( int letter )
++{
++    WCHAR path[160], sub[192];
++
++    if (letter < 0 || letter >= MAX_DOS_DRIVES) return;
++    rbw_volume_devnode_path( path, ARRAY_SIZE(path), letter );
++    swprintf( sub, ARRAY_SIZE(sub), L"%s\\Control", path );
++    RegDeleteKeyW( HKEY_LOCAL_MACHINE, sub );
++    RegDeleteKeyW( HKEY_LOCAL_MACHINE, path );
++}
++
++static void rbw_set_volume_devnode( struct dos_drive *drive )
++{
++    static const WCHAR class_guid[] = L"{71a27cdd-812a-11d0-bec7-08002be2092f}";
++    struct disk_device *device;
++    WCHAR path[160], pdo[MAX_PATH], name[64];
++    HKEY key = 0, control = 0;
++    DWORD dw, len;
++
++    if (!drive || !drive->volume || drive->drive < 0 || drive->drive >= MAX_DOS_DRIVES) return;
++    device = drive->volume->device;
++
++    /* only the types that GetDriveType reports as DRIVE_REMOVABLE */
++    if (!device || (device->type != DEVICE_HARDDISK && device->type != DEVICE_FLOPPY))
++    {
++        rbw_delete_volume_devnode( drive->drive );
++        return;
++    }
++
++    len = device->name.Length / sizeof(WCHAR);
++    if (!len || len >= ARRAY_SIZE(pdo)) return;
++    memcpy( pdo, device->name.Buffer, device->name.Length );
++    pdo[len] = 0;
++
++    rbw_volume_devnode_path( path, ARRAY_SIZE(path), drive->drive );
++    if (RegCreateKeyExW( HKEY_LOCAL_MACHINE, path, 0, NULL, REG_OPTION_VOLATILE,
++                         KEY_ALL_ACCESS, NULL, &key, NULL ))
++        return;
++
++    RegSetValueExW( key, L"ClassGUID", 0, REG_SZ, (const BYTE *)class_guid, sizeof(class_guid) );
++    RegSetValueExW( key, L"Class", 0, REG_SZ, (const BYTE *)L"Volume", sizeof(L"Volume") );
++    RegSetValueExW( key, L"DeviceDesc", 0, REG_SZ,
++                    (const BYTE *)L"Generic volume", sizeof(L"Generic volume") );
++    RegSetValueExW( key, L"Mfg", 0, REG_SZ, (const BYTE *)L"Microsoft", sizeof(L"Microsoft") );
++    RegSetValueExW( key, L"Service", 0, REG_SZ, (const BYTE *)L"volsnap", sizeof(L"volsnap") );
++    RegSetValueExW( key, L"PhysicalDeviceObjectName", 0, REG_SZ,
++                    (const BYTE *)pdo, (len + 1) * sizeof(WCHAR) );
++
++    if (drive->volume->label[0])
++        RegSetValueExW( key, L"FriendlyName", 0, REG_SZ, (const BYTE *)drive->volume->label,
++                        (lstrlenW( drive->volume->label ) + 1) * sizeof(WCHAR) );
++    else
++    {
++        swprintf( name, ARRAY_SIZE(name), L"Volume (%c:)", (WCHAR)('A' + drive->drive) );
++        RegSetValueExW( key, L"FriendlyName", 0, REG_SZ, (const BYTE *)name,
++                        (lstrlenW( name ) + 1) * sizeof(WCHAR) );
++    }
++
++    dw = 0x84;   /* CM_DEVCAP_REMOVABLE | CM_DEVCAP_SURPRISEREMOVALOK */
++    RegSetValueExW( key, L"Capabilities", 0, REG_DWORD, (const BYTE *)&dw, sizeof(dw) );
++    dw = 0;
++    RegSetValueExW( key, L"ConfigFlags", 0, REG_DWORD, (const BYTE *)&dw, sizeof(dw) );
++
++    if (!RegCreateKeyExW( key, L"Control", 0, NULL, REG_OPTION_VOLATILE,
++                          KEY_ALL_ACCESS, NULL, &control, NULL ))
++    {
++        dw = 1;
++        RegSetValueExW( control, L"Linked", 0, REG_DWORD, (const BYTE *)&dw, sizeof(dw) );
++        RegCloseKey( control );
++    }
++    RegCloseKey( key );
++
++    TRACE( "RBW-VOLNODE %c: -> %s\n", 'A' + drive->drive, debugstr_w(pdo) );
++}
++/* ---------------------------------------------------------------------- */
++
+ static NTSTATUS set_volume_info( struct volume *volume, struct dos_drive *drive, const char *device,
+                                  const char *mount_point, enum device_type type, const GUID *guid,
+                                  const char *label, const char *disk_serial )
+@@ -1024,6 +1130,8 @@
+     if (volume->mount) set_mount_point_id( volume->mount, id, id_len );
+     if (drive && drive->mount) set_mount_point_id( drive->mount, id, id_len );
+ 
++    if (drive) rbw_set_volume_devnode( drive );   /* RBW-VOLNODE */
++
+     return STATUS_SUCCESS;
+ }
+ 

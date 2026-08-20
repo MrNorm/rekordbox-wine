@@ -1,0 +1,19 @@
+# Files allowed to differ between the working Wine tree and
+# "pristine + upstream/0*.patch". One path per line, then a reason.
+#
+# Anything NOT listed here is a hard failure in bin/treediff.sh, because it may
+# be a fix that exists only in a developer's working tree — which has happened
+# three times in this project (the wineusb unixlib, the RBW-MMCSS block, and
+# these instrumentation files).
+#
+# Every entry here must be DEBUG INSTRUMENTATION ONLY: code that measures, and
+# that must never appear in a shipped build. bin/build-patched-dlls.sh builds
+# from the patch series into a clean tree, so nothing below can reach a package;
+# REGRESSION.md's packaging gate verifies their markers are absent.
+#
+# path                              reason
+dlls/d2d1/device.c                  RBW-PAINT: counts Direct2D EndDraw to measure the real frame rate (T08). Screen capture cannot measure it under XWayland.
+dlls/mmdevapi/client.c              RBW-PERIODS / RBW-FORCESHARED / RBW-CLIENTS: env-gated buffer-period knobs and a per-second client reporter (T10). Defaults reproduce shipping behaviour exactly.
+dlls/mmdevapi/mmdevapi_private.h    RBW-SESSION / RBW-NULLSINK: fields held for the session-notification experiment (T03).
+dlls/mmdevapi/session.c             RBW-SESSION: three env-selected arms for the lying RegisterAudioSessionNotification stub. Unset = shipping behaviour.
+dlls/winealsa.drv/alsa.c            RBW-SEC / RBW-GAP / RBW-PAD / RBW-POS: per-second counters and timing probes (T10). Counters and ERR() only, no control flow.

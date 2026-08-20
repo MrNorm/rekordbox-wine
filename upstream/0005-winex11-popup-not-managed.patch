@@ -1,0 +1,92 @@
+Subject: [PATCH] winex11: don't let the window manager own tool-window and
+ layered popups
+
+A WS_POPUP that carries WS_SYSMENU is currently handed to the window manager.
+Menus, tooltips and drop shadows are not application windows on Windows and are
+never WM-managed there; handing them over lets the WM apply its own policies to
+them. KDE, for one, moves an off-screen window back onto the screen -- and a
+toolkit that positions its own chrome relative to a popup then sees that
+geometry change underneath it.
+
+Measured with rekordbox 7.2.18 (JUCE 8) on wine-11.15 + KWin. Its menu popups
+carry WS_SYSMENU, and JUCE surrounds every popup with four 14 px drop-shadow
+windows. For a menu opening at x = 1 the left shadow lands at x = -13; KWin
+moves it to x = 0; JUCE observes the move and dismisses the entire menu 11 ms
+after it was mapped:
+
+    File menu   mapped at +0.019 s, hidden at +0.030 s
+    View menu   mapped at +0.014 s, hidden at +2.102 s (by the user)
+
+The visible result was that the File menu and the application's view-mode
+selector never opened at all while the window was maximised at x = 0, and both
+opened perfectly once the window was moved 14 px to the right -- a cliff exactly
+at the shadow width:
+
+    window x    File menu opens    left shadow would be at
+         0          0/2                  -13
+         8          0/2                   -5
+        12          0/2                   -1
+        14          1/2                   +1
+        60          1/2                  +47
+
+A standalone reproducer confirms the rule is WS_SYSMENU and nothing else. Four
+windows of the same shape, created at 0,0 and moved into place, then re-read
+after settling:
+
+    WS_POPUP, TOOLWINDOW                     -13,36  ->  -13,36   stays
+    WS_POPUP, TOOLWINDOW|LAYERED             -13,586 ->  -13,586  stays
+    WS_POPUP|WS_SYSMENU, TOOLWINDOW|LAYERED  -13,800 ->    0,800  MOVED
+    WS_POPUP|WS_SYSMENU, same but on-screen   32,800 ->   32,800  stays
+
+get_mwm_decorations_for_style() already returns 0 immediately for
+WS_EX_TOOLWINDOW and WS_EX_LAYERED, i.e. winex11 already treats these as
+undecorated chrome. This makes is_window_managed() agree with it.
+
+With the patch, every popup in the application opens 4/4 with the window
+maximised at x = 0, and the off-screen shadow stays where the toolkit put it
+(observed at x = -4 in the X tree).
+
+---
+--- a/dlls/winex11.drv/window.c
++++ b/dlls/winex11.drv/window.c
+@@ -451,15 +451,39 @@
+     if ((style & WS_CAPTION) == WS_CAPTION) return TRUE;
+     /* windows with thick frame are managed */
+     if (style & WS_THICKFRAME) return TRUE;
++    ex_style = NtUserGetWindowLongW( hwnd, GWL_EXSTYLE );
+     if (style & WS_POPUP)
+     {
++        /* RBW-POPUP: menus, tooltips and drop shadows are chrome, not
++         * application windows, and Windows never lets a window manager own
++         * them. Handing them over lets the WM enforce its own policies on
++         * them -- KDE moves an off-screen one back onto the screen -- and a
++         * toolkit that positions its chrome relative to a popup then sees the
++         * geometry change underneath it and tears the popup down.
++         *
++         * Measured with rekordbox 7.2.18 (JUCE 8): its menu popups carry
++         * WS_SYSMENU, so the test below claimed them. Each popup is surrounded
++         * by four 14 px drop-shadow windows; for a menu opening at x = 1 the
++         * left one lands at x = -13, KWin moves it to x = 0, and JUCE dismisses
++         * the whole menu 11 ms after mapping it. The result was that the File
++         * menu and the view-mode selector never opened at all while the window
++         * was maximised at x = 0, and opened perfectly once it was moved 14 px
++         * right.
++         *
++         * get_mwm_decorations_for_style() below already treats both of these
++         * ex-styles as undecorated chrome; this keeps the two consistent. */
++        if (ex_style & (WS_EX_TOOLWINDOW | WS_EX_LAYERED))
++        {
++            TRACE( "RBW-POPUP %p: tool/layered popup, not managed (style %#x ex %#x)\n",
++                   hwnd, (int)style, (int)ex_style );
++            return FALSE;
++        }
+         /* popup with sysmenu == caption are managed */
+         if (style & WS_SYSMENU) return TRUE;
+         /* full-screen popup windows are managed */
+         if (fullscreen) return TRUE;
+     }
+     /* application windows are managed */
+-    ex_style = NtUserGetWindowLongW( hwnd, GWL_EXSTYLE );
+     if (ex_style & WS_EX_APPWINDOW) return TRUE;
+     /* windows that own popups are managed */
+     if (has_owned_popups( hwnd )) return TRUE;

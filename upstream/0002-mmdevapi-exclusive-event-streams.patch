@@ -1,0 +1,55 @@
+Subject: [PATCH 2/5] mmdevapi: make event-driven exclusive-mode streams usable
+
+Two problems on the standard low-latency path,
+Initialize(EXCLUSIVE | AUDCLNT_STREAMFLAGS_EVENTCALLBACK):
+
+  - adjust_timing() refused the combination outright with
+    AUDCLNT_E_DEVICE_IN_USE on an idle device, above the driver, so changing
+    audio driver could not help;
+  - the buffer handed back was not usable a period at a time, so GetBuffer for
+    a full period returned BUFFER_TOO_LARGE with padding stuck at the whole
+    buffer.
+
+DJ applications probe and open in exclusive mode; with these fixed, the sample
+rate list populates and playback sustains.
+
+---
+--- a/dlls/mmdevapi/client.c
++++ b/dlls/mmdevapi/client.c
+@@ -145,9 +145,33 @@
+                 if (*duration != *period)
+                     return AUDCLNT_E_BUFDURATION_PERIOD_NOT_EQUAL;
+ 
+-                FIXME("EXCLUSIVE mode with EVENTCALLBACK\n");
+-
+-                return AUDCLNT_E_DEVICE_IN_USE;
++                /* RBW-MMDEV2: event-driven exclusive mode.
++                 *
++                 * The earlier version of this hunk assumed the backends ran a
++                 * multi-period ring underneath and left duration == period. They
++                 * do not: duration IS the mmdevapi buffer, so the client got a
++                 * buffer exactly one period long. get_render_buffer then refuses
++                 * every request, because
++                 *
++                 *     held_frames + frames > bufsize_frames
++                 *
++                 * is true for a full period whenever ANY frames are still held.
++                 * Measured with rekordbox 7.2.17 on a DDJ-400: held_frames
++                 * pinned at 1024 == bufsize == period, 6,963,363
++                 * GetCurrentPadding calls against 20 GetBuffer calls, and 20
++                 * stream rebuilds in 100 s as the starved stream collapsed and
++                 * was recreated.
++                 *
++                 * Give it several periods of slack, exactly as the non-event
++                 * exclusive path immediately below already does. The client is
++                 * still signalled once per period and still writes a period at a
++                 * time; it simply now has somewhere to put it. GetBufferSize
++                 * reports the real size, so a client that sizes itself from that
++                 * stays correct. */
++                if (*duration < 4 * *period)
++                    *duration = 4 * *period;
++                TRACE("RBW-MMDEV2 exclusive+event: duration widened to %lu for period %lu\n",
++                      (ULONG)*duration, (ULONG)*period);
+             } else if (*duration < 8 * *period)
+                 *duration = 8 * *period; /* May grow above 2s. */
+         }

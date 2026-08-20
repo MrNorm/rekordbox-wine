@@ -1,0 +1,5 @@
+rekordbox-wine (0.2.0-1) unstable; urgency=medium
+
+  * Initial packaging: ten Wine fixes, launcher, udev and module configuration.
+
+ -- rekordbox-wine maintainers <nobody@example.invalid>  Thu, 20 Aug 2026 09:00:00 +0100

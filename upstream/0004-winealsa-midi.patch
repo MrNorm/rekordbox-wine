@@ -1,0 +1,292 @@
+Subject: [PATCH 4/5] winealsa: usable MIDI - port names, subscribable ports, rawmidi output
+
+Three related fixes for real MIDI hardware.
+
+1. Port naming. A class-compliant USB device names its sequencer client after
+   the product ("DDJ-400") and its port after the client ("DDJ-400 MIDI 1"), so
+   "client - port" yields "DDJ-400 - DDJ-400 MIDI 1" where Windows reports
+   plain "DDJ-400". Applications match hardware on that string, so the
+   decoration makes a supported controller unrecognisable.
+
+2. Enumerate only SUBSCRIBABLE ports. The only thing this driver does with a
+   port is snd_seq_connect_from/to, which needs CAP_SUBS_READ/CAP_SUBS_WRITE;
+   CAP_READ/CAP_WRITE alone is not enough. PipeWire registers ports that are
+   readable but not subscribable, and offering them as MIDI devices puts
+   unusable entries ahead of the real hardware in a list applications walk by
+   index.
+
+3. Send to hardware via rawmidi, not the sequencer. The sequencer delivers a
+   userspace SysEx to a rawmidi port in 32-byte chunks, so a 66-byte message
+   reaches the USB MIDI packetiser as 32 + 32 + 2; that packetiser emits whole
+   3-byte continuation packets, sends 63 bytes and holds one back, and whether
+   the last packet joins the same URB is a race. A device that receives a SysEx
+   split across two USB transfers can hang: a Pioneer DDJ-400 stops accepting
+   output permanently and needs a physical power cycle. Windows delivers a
+   midiOutLongMsg SysEx as one transfer, and so do native Linux MIDI
+   applications, because they write rawmidi.
+
+   Destinations with no card behind them keep the sequencer path, so
+   application-to-application MIDI is unchanged. Where rawmidi is used the
+   sequencer port is deliberately not subscribed, so short and long messages
+   cannot travel by two routes and be reordered. The write result is checked;
+   the sequencer path discarded it and returned MMSYSERR_NOERROR regardless.
+
+Measured on a DDJ-400 with rekordbox 7.2.17: 0 successful device handshakes in
+12 runs before, 4 of 4 after, with no hangs.
+
+---
+--- a/dlls/winealsa.drv/alsamidi.c
++++ b/dlls/winealsa.drv/alsamidi.c
+@@ -60,6 +60,7 @@
+     snd_seq_t          *seq;
+     snd_seq_addr_t      addr;
+     int                 port_out;
++    snd_rawmidi_t      *rawmidi;   /* hardware node, or NULL to use the sequencer */
+ };
+ 
+ struct midi_src
+@@ -289,7 +290,13 @@
+     struct midi_dest *dest;
+     struct midi_src *src;
+ 
+-    if (cap & SND_SEQ_PORT_CAP_WRITE) {
++    /* Only SUBSCRIBABLE ports are usable. The single thing this driver ever does
++     * with a port is snd_seq_connect_from/to, which needs CAP_SUBS_READ /
++     * CAP_SUBS_WRITE; CAP_READ / CAP_WRITE alone is not enough. PipeWire
++     * registers ports that are readable but not subscribable, and enumerating
++     * them offers the application MIDI devices that can never carry data --
++     * ahead of the real hardware, since applications walk the list by index. */
++    if (cap & SND_SEQ_PORT_CAP_SUBS_WRITE) {
+         TRACE("OUT (%d:%s:%s:%d:%s:%x)\n",snd_seq_client_info_get_client(cinfo),
+               snd_seq_client_info_get_name(cinfo),
+               snd_seq_client_info_get_type(cinfo) == SND_SEQ_USER_CLIENT ? "user" : "kernel",
+@@ -323,7 +330,21 @@
+            In the second case the port name should be explicit enough due to its big size.
+         */
+         len = strlen(snd_seq_port_info_get_name(pinfo));
+-        if ( (strlen(snd_seq_client_info_get_name(cinfo)) + len + 3) < sizeof(name) ) {
++        /* A class-compliant USB device names its sequencer client after the
++         * product ("DDJ-400") and its port after the client ("DDJ-400 MIDI 1"),
++         * so "client - port" yields "DDJ-400 - DDJ-400 MIDI 1" where Windows
++         * reports plain "DDJ-400". Applications match hardware on that name, so
++         * the decoration makes a supported controller unrecognisable. When the
++         * port name merely repeats the client name, the client name alone is
++         * both accurate and what Windows would report. */
++        if (*snd_seq_client_info_get_name(cinfo) &&
++            !strncmp(snd_seq_port_info_get_name(pinfo),
++                     snd_seq_client_info_get_name(cinfo),
++                     strlen(snd_seq_client_info_get_name(cinfo)))) {
++            len = min(strlen(snd_seq_client_info_get_name(cinfo)), sizeof(name) - 1);
++            memcpy(name, snd_seq_client_info_get_name(cinfo), len);
++            name[len] = '\0';
++        } else if ( (strlen(snd_seq_client_info_get_name(cinfo)) + len + 3) < sizeof(name) ) {
+             sprintf(name, "%s - %s", snd_seq_client_info_get_name(cinfo), snd_seq_port_info_get_name(pinfo));
+             len = strlen(name);
+         } else {
+@@ -364,7 +385,7 @@
+ 
+         num_dests++;
+     }
+-    if (cap & SND_SEQ_PORT_CAP_READ) {
++    if (cap & SND_SEQ_PORT_CAP_SUBS_READ) {   /* see the note above */
+         TRACE("IN  (%d:%s:%s:%d:%s:%x)\n",snd_seq_client_info_get_client(cinfo),
+               snd_seq_client_info_get_name(cinfo),
+               snd_seq_client_info_get_type(cinfo) == SND_SEQ_USER_CLIENT ? "user" : "kernel",
+@@ -394,7 +415,21 @@
+            In the second case the port name should be explicit enough due to its big size.
+         */
+         len = strlen(snd_seq_port_info_get_name(pinfo));
+-        if ( (strlen(snd_seq_client_info_get_name(cinfo)) + len + 3) < sizeof(name) ) {
++        /* A class-compliant USB device names its sequencer client after the
++         * product ("DDJ-400") and its port after the client ("DDJ-400 MIDI 1"),
++         * so "client - port" yields "DDJ-400 - DDJ-400 MIDI 1" where Windows
++         * reports plain "DDJ-400". Applications match hardware on that name, so
++         * the decoration makes a supported controller unrecognisable. When the
++         * port name merely repeats the client name, the client name alone is
++         * both accurate and what Windows would report. */
++        if (*snd_seq_client_info_get_name(cinfo) &&
++            !strncmp(snd_seq_port_info_get_name(pinfo),
++                     snd_seq_client_info_get_name(cinfo),
++                     strlen(snd_seq_client_info_get_name(cinfo)))) {
++            len = min(strlen(snd_seq_client_info_get_name(cinfo)), sizeof(name) - 1);
++            memcpy(name, snd_seq_client_info_get_name(cinfo), len);
++            name[len] = '\0';
++        } else if ( (strlen(snd_seq_client_info_get_name(cinfo)) + len + 3) < sizeof(name) ) {
+             sprintf(name, "%s - %s", snd_seq_client_info_get_name(cinfo), snd_seq_port_info_get_name(pinfo));
+             len = strlen(name);
+         } else {
+@@ -489,6 +524,103 @@
+     notify->instance = dest->midiDesc.dwInstance;
+ }
+ 
++/* Sending MIDI to hardware: rawmidi rather than the sequencer.
++ *
++ * The ALSA sequencer delivers a userspace SysEx to a rawmidi port in 32-byte
++ * chunks (dump_var_event), so a 66-byte message arrives at the USB MIDI
++ * packetiser as 32 + 32 + 2. That packetiser emits whole 3-byte
++ * SysEx-continuation packets only, so after the first 64 bytes it emits 21
++ * packets -- 63 bytes -- and holds one byte back until the last chunk arrives.
++ * Whether that final packet joins the same URB is a race.
++ *
++ * Some devices do not tolerate a SysEx split across two USB transfers. A
++ * Pioneer DDJ-400 stops accepting output altogether and needs a physical power
++ * cycle. Windows delivers a midiOutLongMsg SysEx to the device as one transfer,
++ * and so do native Linux MIDI applications, because they write rawmidi.
++ *
++ * Destinations with no card behind them (other applications, Midi Through) keep
++ * the sequencer path, so application-to-application MIDI is unchanged.
++ */
++
++/* Length of a complete MIDI message from its status byte. */
++static int alsa_midi_msg_len(BYTE status)
++{
++    if (status < 0x80) return 0;
++    if (status < 0xF0)
++        return ((status & 0xF0) == 0xC0 || (status & 0xF0) == 0xD0) ? 2 : 3;
++    switch (status)
++    {
++    case 0xF1: case 0xF3: return 2;
++    case 0xF2:            return 3;
++    default:              return 1;   /* F6, F8-FF; F0/F7 go through long data */
++    }
++}
++
++/* Write a whole message, and report whether every byte was accepted. */
++static BOOL alsa_rawmidi_write(struct midi_dest *dest, const BYTE *data, UINT len)
++{
++    const BYTE *p = data;
++    UINT left = len;
++    int retries = 0;
++
++    while (left)
++    {
++        ssize_t n = snd_rawmidi_write(dest->rawmidi, p, left);
++
++        if (n == -EAGAIN)
++        {
++            /* The device is not draining. Give it a bounded chance rather than
++             * blocking a caller that may be on the application's audio thread. */
++            if (++retries > 200) break;
++            usleep(1000);
++            continue;
++        }
++        if (n < 0)
++        {
++            WARN("rawmidi write failed: %s\n", snd_strerror(n));
++            return FALSE;
++        }
++        p += n;
++        left -= n;
++    }
++
++    if (left)
++    {
++        WARN("rawmidi short write: %u of %u bytes accepted\n", len - left, len);
++        return FALSE;
++    }
++    snd_rawmidi_drain(dest->rawmidi);
++    return TRUE;
++}
++
++/* Open the hardware node behind a sequencer destination, if it has one.
++ * snd-seq-midi creates one sequencer port per rawmidi device on a card and the
++ * port number is the device number, so hw:<card>,<port> is the same endpoint. */
++static void alsa_rawmidi_open(struct midi_dest *dest, WORD dev_id)
++{
++    snd_seq_client_info_t *cinfo;
++    char name[32];
++    int card, err;
++
++    dest->rawmidi = NULL;
++
++    snd_seq_client_info_alloca(&cinfo);
++    if (snd_seq_get_any_client_info(dest->seq, dest->addr.client, cinfo) < 0) return;
++    card = snd_seq_client_info_get_card(cinfo);
++    if (card < 0) return;   /* not backed by a card: keep the sequencer path */
++
++    snprintf(name, sizeof(name), "hw:%d,%d", card, dest->addr.port);
++    err = snd_rawmidi_open(NULL, &dest->rawmidi, name, SND_RAWMIDI_NONBLOCK);
++    if (err < 0)
++    {
++        /* Busy is the expected failure when something else holds the port. */
++        dest->rawmidi = NULL;
++        WARN("cannot open %s (%s), using the sequencer\n", name, snd_strerror(err));
++        return;
++    }
++    TRACE("device %u sending directly to %s\n", dev_id, name);
++}
++
+ static UINT midi_out_open(WORD dev_id, MIDIOPENDESC *midi_desc, UINT flags, struct notify_context *notify)
+ {
+     int ret;
+@@ -560,6 +692,13 @@
+         TRACE("Output port %d created successfully\n", port_out);
+         dest->port_out = port_out;
+ 
++        /* Prefer the hardware node. When we have it, do not subscribe the
++         * sequencer port as well: one route only, so short and long messages
++         * cannot be reordered against each other. */
++        alsa_rawmidi_open(dest, dev_id);
++        if (dest->rawmidi)
++            ret = 0;
++        else
+         /* Connect our app port to the device port */
+         ret = snd_seq_connect_to(midi_seq, port_out, dest->addr.client, dest->addr.port);
+ 
+@@ -615,6 +754,12 @@
+     case MOD_MIDIPORT:
+     case MOD_SYNTH:
+         seq_lock();
++        if (dest->rawmidi)
++        {
++            snd_rawmidi_drain(dest->rawmidi);
++            snd_rawmidi_close(dest->rawmidi);
++            dest->rawmidi = NULL;
++        }
+         TRACE("Deleting port :%d, connected to %d:%d\n", dest->port_out, dest->addr.client, dest->addr.port);
+         snd_seq_delete_simple_port(dest->seq, dest->port_out);
+         dest->port_out = -1;
+@@ -673,6 +818,21 @@
+         return MMSYSERR_NOERROR;
+     }
+ 
++    /* Short messages must take the same route as long ones, or a note-on could
++     * overtake the SysEx that precedes it. */
++    if (dest->rawmidi)
++    {
++        BYTE msg[3];
++        int len = alsa_midi_msg_len(evt);
++
++        if (!len) return MMSYSERR_NOERROR;
++        msg[0] = evt; msg[1] = d1; msg[2] = d2;
++        seq_lock();
++        alsa_rawmidi_write(dest, msg, len);
++        seq_unlock();
++        return MMSYSERR_NOERROR;
++    }
++
+     switch (dest->caps.wTechnology)
+     {
+     case MOD_SYNTH:
+@@ -833,6 +993,21 @@
+           data[0], data[1], data[2], data[hdr->dwBufferLength-3],
+           data[hdr->dwBufferLength-2], data[hdr->dwBufferLength-1]);
+ 
++    /* One write, so the whole SysEx reaches the driver before it builds a USB
++     * transfer. See the comment above alsa_midi_msg_len(). */
++    if (dest->rawmidi)
++    {
++        BOOL ok;
++        seq_lock();
++        ok = alsa_rawmidi_write(dest, data, hdr->dwBufferLength);
++        seq_unlock();
++        free(new_data);
++        hdr->dwFlags &= ~MHDR_INQUEUE;
++        hdr->dwFlags |= MHDR_DONE;
++        set_out_notify(notify, dest, dev_id, MOM_DONE, (UINT_PTR)hdr, 0);
++        return ok ? MMSYSERR_NOERROR : MMSYSERR_NOTENABLED;
++    }
++
+     switch (dest->caps.wTechnology)
+     {
+     case MOD_FMSYNTH:

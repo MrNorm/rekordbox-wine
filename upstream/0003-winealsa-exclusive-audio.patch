@@ -1,0 +1,274 @@
+Subject: [PATCH 3/5] winealsa: exclusive-mode audio - period events and hardware formats
+
+Signal the client event when a period is actually free rather than on every
+wakeup, and validate exclusive-mode formats against the raw hardware device
+instead of the plug layer, so IsFormatSupported reports what the hardware can
+really do. Includes diagnostic warnings for the states that previously failed
+silently.
+
+---
+--- a/dlls/winealsa.drv/alsa.c
++++ b/dlls/winealsa.drv/alsa.c
+@@ -764,6 +764,42 @@
+     return need_remap ? S_OK : S_FALSE;
+ }
+ 
++/* Channel mapping for a given share mode.
++ *
++ * In EXCLUSIVE mode there is no conversion layer between the application and
++ * the hardware, so Wine must not silently reorder channels either: the
++ * application's channel N is hardware channel N. The positional remap in
++ * map_channels() exists to place Windows speaker positions into ALSA's
++ * canonical surround order (FL FR RL RR FC LFE), which is right when the plug
++ * layer is in the path and wrong when talking to the device directly.
++ *
++ * It also inflates the channel COUNT, which is what makes this load-bearing
++ * rather than merely cosmetic. A 4-channel request carrying dwChannelMask
++ * FL|FR|FC|LFE maps FC to ALSA index 4 and LFE to index 5, so alsa_channels
++ * becomes 6. Measured on a Pioneer DDJ-400, whose four channels are two stereo
++ * pairs that the USB descriptor happens to label FL FR FC LFE:
++ *
++ *     RBW-DIAG device "hw:1,0": chans req 4 mapped 6, hw [4,4] -> S_FALSE
++ *
++ * i.e. every exclusive format was rejected for exceeding a hardware maximum of
++ * 4 channels, on a request for exactly 4 channels. */
++static HRESULT map_channels_for_share(AUDCLNT_SHAREMODE share, EDataFlow flow,
++                                      const WAVEFORMATEX *fmt, int *alsa_channels, int *map)
++{
++    if(share == AUDCLNT_SHAREMODE_EXCLUSIVE){
++        int i;
++
++        for(i = 0; i < fmt->nChannels; ++i)
++            map[i] = i;
++        *alsa_channels = fmt->nChannels;
++
++        TRACE("exclusive mode: %u channels passed through unmapped\n", fmt->nChannels);
++        return S_FALSE;  /* S_FALSE == no remapping required */
++    }
++
++    return map_channels(flow, fmt, alsa_channels, map);
++}
++
+ static void silence_buffer(struct alsa_stream *stream, BYTE *buffer, UINT32 frames)
+ {
+     WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE*)stream->fmt;
+@@ -782,6 +818,12 @@
+     struct alsa_stream *stream;
+     snd_pcm_sw_params_t *sw_params = NULL;
+     snd_pcm_format_t format;
++    /* A greppable marker. The RBW-EVENT comment further down does not survive
++     * compilation, so without a real string there is no way to answer "is my
++     * patched driver actually loaded" from a log — a question that has produced
++     * a false result more than once in this project. */
++    static int rbw_announced;
++    if (!rbw_announced++) TRACE("RBW-EVENT3 build: event gated on a free period, with a multi-period buffer.\n");
+     unsigned int rate, alsa_period_us, i;
+     WAVEFORMATEXTENSIBLE *fmtex = (WAVEFORMATEXTENSIBLE *)params->fmt;
+     int err;
+@@ -801,7 +843,8 @@
+         return STATUS_SUCCESS;
+     }
+ 
+-    stream->need_remapping = map_channels(params->flow, params->fmt, &stream->alsa_channels, stream->alsa_channel_map) == S_OK;
++    stream->need_remapping = map_channels_for_share(params->share, params->flow, params->fmt,
++                                                    &stream->alsa_channels, stream->alsa_channel_map) == S_OK;
+ 
+     if((err = snd_pcm_hw_params_any(stream->pcm_handle, stream->hw_params)) < 0){
+         WARN("Unable to get hw_params: %d (%s)\n", err, snd_strerror(err));
+@@ -1388,6 +1431,16 @@
+     data_frames_played = min(stream->data_in_alsa_frames, avail);
+     stream->data_in_alsa_frames -= data_frames_played;
+ 
++    {
++        static unsigned int rbw_wd;
++        UINT32 held_before = stream->held_frames;
++        if((rbw_wd++ % 400) == 0)
++            TRACE("RBW-WD %u: avail=%lu in_alsa=%u played=%lu held=%u started=%d max_copy=%lu\n",
++                rbw_wd, (unsigned long)avail, stream->data_in_alsa_frames,
++                (unsigned long)data_frames_played, held_before, stream->started,
++                (unsigned long)max_copy_frames);
++    }
++
+     if(stream->held_frames > data_frames_played){
+         if(stream->started)
+             stream->held_frames -= data_frames_played;
+@@ -1411,7 +1464,38 @@
+         max_copy_frames -= written;
+     }
+ 
+-    if(stream->event)
++    /* RBW-EVENT: only signal when the client can actually do something about
++     * it. The event means "a buffer is ready"; signalling once per period
++     * regardless leaves a client that trusts that contract calling GetBuffer for
++     * a full period and being refused with AUDCLNT_E_BUFFER_TOO_LARGE. In shared
++     * mode the buffer is several periods deep so this is almost always true and
++     * nothing changes; it matters in exclusive mode, where buffer == period. */
++    /* RBW-EVENT2: patch 0003 gated this on a full period being free. That
++     * removed the GetBuffer refusals it was written for (343 -> 0), but on a
++     * real workload it starves the client: with the condition rarely true the
++     * event fires rarely, the client writes rarely, and ALSA drains. Measured
++     * on a DDJ-400 -- the PCM cycles RUNNING -> XRUN -> closed -> XRUN
++     * continuously, even while idle, and rekordbox rebuilds the stream each
++     * time (which re-sends the LED init, hence a controller LED flashing in
++     * step with the loop).
++     *
++     * Signal whenever ANY space is free rather than a whole period. A client
++     * that asks for more than is available still gets BUFFER_TOO_LARGE and can
++     * retry, which is survivable; being left unsignalled is not. */
++    /* RBW-EVENT3: signal only when a full period is free.
++     *
++     * 0003 gated on this, 0009 relaxed it to "any space free" because the
++     * client was being starved. The starvation was really patch 0002 leaving
++     * the mmdevapi buffer one period long (fixed properly in 0010), and the
++     * relaxed gate then signalled on every timer tick whether or not the client
++     * could do anything with it. Measured cost: wineserver at 46.6% CPU and a
++     * visibly laggy UI, because every NtSetEvent is a server round-trip.
++     *
++     * With 0010 in place the buffer is several periods deep, so this condition
++     * is true often enough to keep the client fed and rare enough not to melt
++     * the server. */
++    if(stream->event &&
++       stream->bufsize_frames - stream->held_frames >= stream->mmdev_period_frames)
+         NtSetEvent(stream->event, NULL);
+ }
+ 
+@@ -1844,6 +1928,40 @@
+     return alsa_unlock_result(stream, &params->result, S_OK);
+ }
+ 
++/* Exclusive mode means there is no conversion layer between the application and
++ * the hardware, so the only honest answer to "is this format supported" is the
++ * hardware's own capability mask.
++ *
++ * Wine names its devices "plughw:CARD,DEV" (see the enumeration below). The plug
++ * plugin resamples, converts sample formats and remaps channels, so querying it
++ * reports what ALSA could SYNTHESISE rather than what the device can actually
++ * do. Asking it about an exclusive-mode format therefore returns S_OK for
++ * essentially anything, and the application only discovers the truth when
++ * snd_pcm_hw_params() refuses the combination at stream-creation time.
++ *
++ * Measured on a Pioneer DDJ-400, whose entire playback capability per
++ * /proc/asound/cardN/stream0 is S16_LE or S24_3LE, 4 channels, 44100 Hz:
++ * IsFormatSupported(EXCLUSIVE) accepted all 48 probed combinations, including
++ * 2-channel 192000 Hz float. rekordbox 7.2.17 believed it, called
++ * Initialize(EXCLUSIVE) at 2ch/48000/float, got
++ * AUDCLNT_E_ENDPOINT_CREATE_FAILED out of alsa_create_stream, and presented an
++ * empty sample-rate list.
++ *
++ * Shared mode is unaffected: there the plug layer really is in the path, and
++ * its converted view is the correct one to report. */
++static const char *alsa_raw_device_name(const char *alsa_name, char *buf, size_t len)
++{
++    unsigned int card, device;
++
++    if(sscanf(alsa_name, "plughw:%u,%u", &card, &device) == 2){
++        snprintf(buf, len, "hw:%u,%u", card, device);
++        return buf;
++    }
++
++    /* "default", or a name we do not recognise: nothing safe to strip. */
++    return alsa_name;
++}
++
+ static NTSTATUS alsa_is_format_supported(void *args)
+ {
+     struct is_format_supported_params *params = args;
+@@ -1854,8 +1972,18 @@
+     unsigned int max = 0, min = 0;
+     int err;
+     int alsa_channels, alsa_channel_map[32];
++    char raw_name[64];
++    const char *device;
++
++    if(params->share == AUDCLNT_SHAREMODE_EXCLUSIVE){
++        static int rbw_announced;
++        if(!rbw_announced++)
++            TRACE("RBW-RAWFMT build: exclusive-mode formats validated against the raw device.\n");
++        device = alsa_raw_device_name(params->device, raw_name, sizeof(raw_name));
++    }else
++        device = params->device;
+ 
+-    params->result = alsa_open_device(params->device, params->flow, &pcm_handle, &hw_params);
++    params->result = alsa_open_device(device, params->flow, &pcm_handle, &hw_params);
+     if(FAILED(params->result))
+         return STATUS_SUCCESS;
+ 
+@@ -1874,6 +2002,8 @@
+     format = alsa_format(params->fmt_in);
+     if (format == SND_PCM_FORMAT_UNKNOWN ||
+         !snd_pcm_format_mask_test(formats, format)){
++        WARN("RBW-DIAG device %s: format %d (%u bit) not in mask\n",
++             debugstr_a(device), format, params->fmt_in->wBitsPerSample);
+         params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
+         goto exit;
+     }
+@@ -1891,6 +2021,8 @@
+     }
+ 
+     if(params->fmt_in->nSamplesPerSec < min || params->fmt_in->nSamplesPerSec > max){
++        WARN("RBW-DIAG device %s: rate %lu outside [%u,%u]\n",
++             debugstr_a(device), params->fmt_in->nSamplesPerSec, min, max);
+         params->result = AUDCLNT_E_UNSUPPORTED_FORMAT;
+         goto exit;
+     }
+@@ -1911,11 +2043,16 @@
+     else if(params->fmt_in->nChannels < min)
+         params->result = S_FALSE;
+ 
+-    map_channels(params->flow, params->fmt_in, &alsa_channels, alsa_channel_map);
++    map_channels_for_share(params->share, params->flow, params->fmt_in, &alsa_channels, alsa_channel_map);
+ 
+     if(alsa_channels > max)
+         params->result = S_FALSE;
+ 
++    if(params->result != S_OK)
++        WARN("RBW-DIAG device %s: chans req %u mapped %d, hw [%u,%u] -> %#lx\n",
++             debugstr_a(device), params->fmt_in->nChannels, alsa_channels,
++             min, max, (unsigned long)params->result);
++
+ exit:
+     free(formats);
+     free(hw_params);
+@@ -1933,8 +2070,22 @@
+     snd_pcm_format_mask_t *formats;
+     unsigned int max_rate, max_channels;
+     int err;
++    char raw_name[64];
+ 
+-    params->result = alsa_open_device(params->device, params->flow, &pcm_handle, &hw_params);
++    /* The mix format is supposed to DESCRIBE THE ENDPOINT, so query the device
++     * rather than the plug layer wrapped around it. Asking plughw yields the
++     * formats ALSA could synthesise, not the ones the hardware runs at -- which
++     * is why the max_channels > 6 heuristic below exists at all: plughw reports
++     * an effectively unbounded channel count for every device, so every device
++     * collapsed to the 2-channel fallback.
++     *
++     * Measured on a Pioneer DDJ-400 (hardware: S16_LE/S24_3LE, 4 channels,
++     * 44100 Hz only): Wine advertised 48000 Hz, 2 ch, 32-bit float. rekordbox
++     * 7.2.17 takes its probe set from the mix format, so it asked for
++     * 2ch/48000/float exclusive -- three parameters the device cannot do -- and
++     * presented an empty sample-rate list. */
++    params->result = alsa_open_device(alsa_raw_device_name(params->device, raw_name, sizeof(raw_name)),
++                                      params->flow, &pcm_handle, &hw_params);
+     if(FAILED(params->result))
+         return STATUS_SUCCESS;
+ 
+@@ -2098,6 +2249,18 @@
+     /* padding is solely updated at callback time in shared mode */
+     *params->padding = stream->held_frames;
+ 
++    /* RBW-PAD: sampled, because a starved client polls this millions of times
++     * (measured: 6,963,363 calls against 20 GetBuffer calls in ~100s). Logging
++     * every call would drown the trace and change the timing being measured. */
++    {
++        static unsigned int rbw_calls;
++        if((rbw_calls++ % 200000) == 0)
++            TRACE("RBW-PAD call %u: padding(held)=%u bufsize=%u period=%u in_alsa=%u started=%d event=%p\n",
++                rbw_calls, stream->held_frames, stream->bufsize_frames,
++                stream->mmdev_period_frames, stream->data_in_alsa_frames,
++                stream->started, stream->event);
++    }
++
+     return alsa_unlock_result(stream, &params->result, S_OK);
+ }
+ 
