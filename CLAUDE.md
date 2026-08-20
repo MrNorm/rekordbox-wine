@@ -23,7 +23,7 @@ of done.
    write the patch up for upstream.
 5. **Ship it as an AUR package** with a **single run-and-play script**. Someone
    who has never read this repository must be able to install and DJ with it.
-   Every finding is recorded with packaging in mind: see `PATH-TO-GOLD.md`.
+   Every finding is recorded with packaging in mind: see `docs/PATH-TO-GOLD.md`.
 
 ### Working style the user has asked for, explicitly
 
@@ -35,21 +35,21 @@ of done.
 - **Be context tolerant.** Assume this session dies mid-sentence. Write findings
   to disk *as they are found*, not at the end.
 - **Every issue becomes a theme or an experiment.** A symptom that is noticed
-  and not written into `THEMES/T*.md` is a symptom that will be rediscovered
+  and not written into `docs/investigation/THEMES/T*.md` is a symptom that will be rediscovered
   from scratch in three sessions' time. Open a new theme file rather than
   appending an unrelated finding to an existing one.
 - Standing permission is on record for `sudo` steps needed to install patched
   Wine components, udev rules, and module changes. Record every system-level
-  change in `PATH-TO-GOLD.md` with its exact reversal command.
+  change in `docs/PATH-TO-GOLD.md` with its exact reversal command.
 
 ## Start of every session, in this order
 
-1. Read `STATE.md` — current hypothesis, what is proven, the single next action.
-2. Read the last two entries of `JOURNAL.md`.
-3. Read the open theme file(s) named in `STATE.md` under "Active themes".
+1. Read `docs/investigation/STATE.md` — current hypothesis, what is proven, the single next action.
+2. Read the last two entries of `docs/investigation/JOURNAL.md`.
+3. Read the open theme file(s) named in `docs/investigation/STATE.md` under "Active themes".
 4. `./bin/rbw status` — reconciles STATE.md against what actually ran.
 
-Do not re-derive anything already recorded as settled in `THEMES/`. If you
+Do not re-derive anything already recorded as settled in `docs/investigation/THEMES/`. If you
 disagree with a settled finding, reopen it explicitly with new evidence rather
 than quietly relitigating it.
 
@@ -58,9 +58,9 @@ than quietly relitigating it.
 Even if the session is ending mid-thought, spend the last tokens on this:
 
 1. `./bin/rbw journal "<what happened, what it means, run ids>"`
-2. Update `STATE.md`: hypothesis, proven/disproven, **Next action** (one concrete
+2. Update `docs/investigation/STATE.md`: hypothesis, proven/disproven, **Next action** (one concrete
    command or decision), and Blocked-on.
-3. Update the relevant `THEMES/T*.md` if evidence moved a hypothesis.
+3. Update the relevant `docs/investigation/THEMES/T*.md` if evidence moved a hypothesis.
 4. `git add -A && git commit` — the commit message is the timeline entry.
 
 A session that produced evidence but left no breadcrumb has produced nothing.
@@ -95,16 +95,30 @@ A session that produced evidence but left no breadcrumb has produced nothing.
 
 ## Layout
 
-    bin/rbw            harness CLI — see `rbw` with no args
-    bin/classify.py    wine log triage + normaliser (for diffing runs)
-    bin/verdict.py     adjudicator: maps a run onto the failure taxonomy
-    recipes/*.recipe   declarative prefix definitions (hashed into manifests)
-    runs/<id>/         per-run evidence: manifest, wine.log, shots/, verdict
-    runs/index.jsonl   one line per run, append-only
-    THEMES/T*.md       one investigation theme each, with RCA
-    STATE.md           read-first: where we are
-    JOURNAL.md         append-only timeline
-    upstream/          Bugzilla / AppDB report drafts
+    bin/                     the tools that ship, plus the harness entry points
+      rekordbox-wine         the launcher users run; verifies everything first
+      make-private-wine.sh   builds the private Wine tree (never touches system Wine)
+      verifyloaded.sh        what a RUNNING process mapped — the check that cannot be fooled
+      treediff.sh            does the patch series still explain the whole Wine tree
+      build-patched-dlls.sh  builds all eight components from the series
+      rbw                    harness CLI — see `rbw` with no args
+      classify.py            wine log triage + normaliser (for diffing runs)
+      verdict.py             adjudicator: maps a run onto the failure taxonomy
+    packaging/               PKGBUILD, debian/, rpm spec — all call install-tree.sh
+    upstream/patches/        the patch series, plus supported-wine and the divergence allowlist
+    upstream/reports/        Bugzilla / AppDB / WirePlumber drafts
+    upstream/probes/         freestanding PE probes and their build scripts
+    research/probes/         one-off investigation scripts, kept for provenance
+    research/retired/        superseded tools, kept because docs cite their reversal
+    recipes/*.recipe         declarative prefix definitions (hashed into manifests)
+    runs/<id>/               per-run evidence: manifest, wine.log, shots/, verdict
+    runs/index.jsonl         one line per run, append-only
+    docs/                    GOLD-STATUS, PACKAGE, PATH-TO-GOLD, REGRESSION, REMAINING-STEPS
+    docs/investigation/
+      STATE.md               read-first: where we are
+      JOURNAL.md             append-only timeline
+      THEMES/T*.md           one investigation theme each, with RCA
+
 
 ## Verdict taxonomy
 

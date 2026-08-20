@@ -76,16 +76,17 @@ Categories=AudioVideo;Audio;Music;
 StartupWMClass=rekordbox.exe
 EOF
 
-for f in README.md GOLD-STATUS.md PATH-TO-GOLD.md REGRESSION.md PACKAGE.md REMAINING-STEPS-TO-GOLD.md; do
-  [[ -f "$f" ]] && install -Dm644 "$f" "$doc/$f"
-done
+install -Dm644 README.md "$doc/README.md"
+install -Dm644 LICENSE   "$doc/LICENSE"
+for f in docs/*.md; do [[ -f "$f" ]] && install -Dm644 "$f" "$doc/$(basename "$f")"; done
 install -dm755 "$doc/THEMES"
-install -m644 THEMES/T*.md "$doc/THEMES/"
+install -m644 docs/investigation/THEMES/T*.md "$doc/THEMES/"
 
 # The patches, so anyone can rebuild them or send them upstream.
 install -dm755 "$doc/patches"
-install -m644 upstream/0*.patch "$doc/patches/"
-install -m644 upstream/rbw-usbhcd.c "$doc/patches/"
-for n in upstream/NOTES-*.md; do [[ -f "$n" ]] && install -m644 "$n" "$doc/patches/"; done
+install -m644 upstream/patches/0*.patch "$doc/patches/"
+install -m644 upstream/patches/rbw-usbhcd.c "$doc/patches/"
+install -m644 upstream/patches/supported-wine.txt "$doc/patches/"
+for n in upstream/reports/NOTES-*.md; do [[ -f "$n" ]] && install -m644 "$n" "$doc/patches/"; done
 
 echo "staged rekordbox-wine into $DEST"

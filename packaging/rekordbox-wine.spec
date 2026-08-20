@@ -15,7 +15,7 @@ Release:        1%{?dist}
 Summary:        Wine fixes and launcher for running rekordbox 7.2.x with a DDJ-400
 
 License:        LGPL-2.1-or-later AND MIT
-URL:            https://github.com/REPLACE-ME/rekordbox-wine
+URL:            https://github.com/MrNorm/rekordbox-wine
 Source0:        %{name}-%{version}.tar.gz
 ExclusiveArch:  x86_64
 

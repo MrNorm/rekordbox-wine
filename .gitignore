@@ -13,7 +13,7 @@ upstream/*.exe
 __pycache__/
 *.pyc
 
-# built by bin/fpsmatrix.sh from damagefps.c
+# built by research/probes/fpsmatrix.sh from damagefps.c
 bin/damagefps
 
 # per-run evidence from bin/rbtest.sh

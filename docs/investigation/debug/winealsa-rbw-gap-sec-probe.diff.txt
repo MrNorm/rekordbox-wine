@@ -1,0 +1,204 @@
+RBW-GAP / RBW-SEC — the winealsa probe that measured the Wine boundary during
+the PC MASTER OUT fault. Against dlls/winealsa.drv/alsa.c as of the shipping
+base (alsa.c.pre-dbg). KEEP: this is the instrument, not a fix.
+
+What it adds, and nothing else:
+
+  RBW-GAP   per stream, the interval between consecutive SUCCESSFUL
+            ReleaseBuffer calls; for any gap over 20 ms it logs how many times
+            the client asked, how many times Wine refused, the last HRESULT,
+            the padding-poll count and held/bufsize.
+
+  RBW-SEC   one line per second per stream: padding polls and the min/max
+            padding seen, GetBuffer tries and refusals, successful releases and
+            frames handed over, and the worst gap.
+
+Timestamps are CLOCK_MONOTONIC, which is the clock research/probes/queueburst.py prints, so
+a line here can be laid directly against the onset of a queue excursion.
+
+Cost control matters here and is built in: a starved client polls padding a
+quarter of a million times a second, so the per-call work is three comparisons
+and the clock is read once per 4096 calls. WINEDEBUG=+mmdevapi once wrote 797 MB
+in 45 s and throttled the application through pipe backpressure; this writes two
+lines a second.
+
+WHAT IT MEASURED (docs/investigation/THEMES/T10 phases 25-26), across four full fault cycles:
+
+  * not one hand-off gap over 50 ms on the exclusive DDJ stream;
+  * both streams handed ~44,100 frames every second, all the way through the
+    excursion, the trim storm and the teardown;
+  * the onset seconds indistinguishable from every other second on both streams.
+
+Conclusion: the Wine boundary is clean, and the trigger for the teardown is
+internal to rekordbox.
+
+Also characterised, for the eventual upstream report: the exclusive client is
+refused AUDCLNT_E_BUFFER_TOO_LARGE ~160,000 times a second and succeeds 43
+times, while the shared client is served 260 times a second with zero refusals.
+About a core of wasted work. Worth fixing on efficiency grounds; proven NOT to
+be this fault (phase 10).
+
+    rebuild:  cp alsa.c.pre-dbg alsa.c && patch -p0 alsa.c < this-file
+              make dlls/winealsa.drv/winealsa.so
+    install:  sudo cp .../winealsa.so /usr/lib/wine/x86_64-unix/winealsa.so
+    revert :  sudo cp -f /usr/lib/wine/x86_64-unix/winealsa.so.rbw-shipping-baseline \
+                         /usr/lib/wine/x86_64-unix/winealsa.so
+
+----8<---- diff ----8<----
+--- ~/.cache/rbw-wine-build/wine-11.15/dlls/winealsa.drv/alsa.c.pre-dbg	2026-08-17 12:33:02.870021044 +0100
++++ ~/.cache/rbw-wine-build/wine-11.15/dlls/winealsa.drv/alsa.c	2026-08-19 09:23:59.235434129 +0100
+@@ -26,6 +26,7 @@
+ #include <stdarg.h>
+ #include <stdio.h>
+ #include <pthread.h>
++#include <time.h>
+ 
+ #include <alsa/asoundlib.h>
+ 
+@@ -77,6 +78,11 @@
+ 
+     BYTE *local_buffer, *tmp_buffer, *remapping_buf, *silence_buf;
+     LONG32 getbuf_last; /* <0 when using tmp_buffer */
++
++    /* RBW-GAP / RBW-SEC: see the comment above alsa_get_render_buffer */
++    double rbw_last_ok, rbw_win_t0, rbw_maxgap;
++    unsigned int rbw_pad_calls, rbw_pad_min, rbw_pad_max;
++    unsigned int rbw_tries, rbw_fails, rbw_rel, rbw_frames, rbw_last_hr;
+     float *vols;
+ 
+     pthread_mutex_t lock;
+@@ -1735,6 +1741,71 @@
+     return alsa_unlock_result(stream, &params->result, S_OK);
+ }
+ 
++/* RBW-GAP / RBW-SEC ---------------------------------------------------------
++ *
++ * docs/investigation/THEMES/T10 phase 25 measured, with the first half of this probe, that the
++ * DDJ's exclusive stream never goes 50 ms without a successful ReleaseBuffer --
++ * not once in four fault cycles. So rekordbox is NOT being blocked at the
++ * driver boundary, and the "stalled hand-off" framing carried since phase 15 is
++ * dead. Yet its engine still grows that device's buffer pool from 3 to 6, once
++ * every ~15 s, and then tears both streams down.
++ *
++ * If the pool is not growing because hand-off failed, it is growing because
++ * something rekordbox READS tells it the device needs more. For an exclusive
++ * event-driven stream it reads almost nothing: GetCurrentPadding, and the
++ * event. (GetPosition is never called at all -- established by RBW-POS, see
++ * debug/wip-exclusive-buffer-contract.diff.txt.)
++ *
++ * So RBW-SEC aggregates one line per second per stream: how often padding was
++ * polled and its range over that second, how many buffers were requested and
++ * refused, how many were handed over and how many frames, and the worst service
++ * gap. Lined up against the onsets from research/probes/queueburst.py -- both use
++ * CLOCK_MONOTONIC -- an anomaly in the padding series ~15 s after each teardown
++ * is what rekordbox is reacting to.
++ *
++ * The aggregation is deliberately cheap. A starved client polls padding
++ * millions of times a second (RBW-PAD measured 6,963,363 calls against 20
++ * GetBuffer calls in ~100 s), so the per-call work is three comparisons and the
++ * clock is only read once every 4096 calls. A probe whose own cost changes the
++ * measurement has already cost this project a day: WINEDEBUG=+mmdevapi wrote
++ * 797 MB in 45 s and throttled the application through pipe backpressure. */
++static double rbw_now(void)
++{
++    struct timespec ts;
++    clock_gettime(CLOCK_MONOTONIC, &ts);
++    return ts.tv_sec + ts.tv_nsec / 1000000000.0;
++}
++
++/* Flush a one-second window if it is due. Called from both the padding poll and
++ * the release path so a stream that stops polling still reports. */
++static void rbw_tick(struct alsa_stream *stream, double now)
++{
++    if(stream->rbw_win_t0 == 0.0){
++        stream->rbw_win_t0 = now;
++        stream->rbw_pad_min = ~0u;
++        return;
++    }
++    if(now - stream->rbw_win_t0 < 1.0)
++        return;
++
++    ERR("RBW-SEC %s t=%.6f padpolls=%u padmin=%d padmax=%d tries=%u fails=%u "
++        "rel=%u frames=%u maxgap=%.1fms held=%u bufsize=%u period=%u\n",
++        stream->share == AUDCLNT_SHAREMODE_EXCLUSIVE ? "EXCL  " : "SHARED",
++        now, stream->rbw_pad_calls,
++        stream->rbw_pad_min == ~0u ? -1 : (int)stream->rbw_pad_min,
++        (int)stream->rbw_pad_max,
++        stream->rbw_tries, stream->rbw_fails, stream->rbw_rel,
++        stream->rbw_frames, stream->rbw_maxgap * 1000.0,
++        stream->held_frames, stream->bufsize_frames, stream->mmdev_period_frames);
++
++    stream->rbw_win_t0 = now;
++    stream->rbw_pad_calls = stream->rbw_tries = stream->rbw_fails = 0;
++    stream->rbw_rel = stream->rbw_frames = 0;
++    stream->rbw_pad_min = ~0u;
++    stream->rbw_pad_max = 0;
++    stream->rbw_maxgap = 0.0;
++}
++
+ static NTSTATUS alsa_get_render_buffer(void *args)
+ {
+     struct get_render_buffer_params *params = args;
+@@ -1744,6 +1815,8 @@
+ 
+     alsa_lock(stream);
+ 
++    stream->rbw_tries++;   /* RBW-SEC: the client is asking */
++
+     if(stream->getbuf_last)
+         return alsa_unlock_result(stream, &params->result, AUDCLNT_E_OUT_OF_ORDER);
+ 
+@@ -1751,8 +1824,11 @@
+         return alsa_unlock_result(stream, &params->result, S_OK);
+ 
+     /* held_frames == GetCurrentPadding_nolock(); */
+-    if(stream->held_frames + frames > stream->bufsize_frames)
++    if(stream->held_frames + frames > stream->bufsize_frames){
++        stream->rbw_fails++;                                    /* RBW-SEC */
++        stream->rbw_last_hr = (unsigned int)AUDCLNT_E_BUFFER_TOO_LARGE;
+         return alsa_unlock_result(stream, &params->result, AUDCLNT_E_BUFFER_TOO_LARGE);
++    }
+ 
+     write_pos = stream->wri_offs_frames;
+     if(write_pos + frames > stream->bufsize_frames){
+@@ -1836,6 +1912,25 @@
+     stream->written_frames += written_frames;
+     stream->getbuf_last = 0;
+ 
++    {   /* RBW-GAP / RBW-SEC: a successful hand-off */
++        double now = rbw_now();
++        stream->rbw_rel++;
++        stream->rbw_frames += written_frames;
++        if(stream->rbw_last_ok > 0.0){
++            double gap = now - stream->rbw_last_ok;
++            if(gap > stream->rbw_maxgap) stream->rbw_maxgap = gap;
++            if(gap > 0.020)
++                ERR("RBW-GAP %s t=%.6f gap=%.1fms tries=%u fails=%u lasthr=%08x "
++                    "padpolls=%u held=%u bufsize=%u wrote=%u\n",
++                    stream->share == AUDCLNT_SHAREMODE_EXCLUSIVE ? "EXCL  " : "SHARED",
++                    now, gap * 1000.0, stream->rbw_tries, stream->rbw_fails,
++                    stream->rbw_last_hr, stream->rbw_pad_calls,
++                    stream->held_frames, stream->bufsize_frames, written_frames);
++        }
++        stream->rbw_last_ok = now;
++        rbw_tick(stream, now);
++    }
++
+     return alsa_unlock_result(stream, &params->result, S_OK);
+ }
+ 
+@@ -2249,6 +2344,14 @@
+     /* padding is solely updated at callback time in shared mode */
+     *params->padding = stream->held_frames;
+ 
++    {   /* RBW-SEC: three comparisons per call; the clock only every 4096 */
++        stream->rbw_pad_calls++;
++        if(stream->held_frames < stream->rbw_pad_min) stream->rbw_pad_min = stream->held_frames;
++        if(stream->held_frames > stream->rbw_pad_max) stream->rbw_pad_max = stream->held_frames;
++        if((stream->rbw_pad_calls & 0xfff) == 0)
++            rbw_tick(stream, rbw_now());
++    }
++
+     /* RBW-PAD: sampled, because a starved client polls this millions of times
+      * (measured: 6,963,363 calls against 20 GetBuffer calls in ~100s). Logging
+      * every call would drown the trace and change the timing being measured. */

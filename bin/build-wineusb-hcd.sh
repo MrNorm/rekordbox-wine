@@ -18,13 +18,13 @@
 #
 # unixlib.c/h gain a sysfs-backed enumeration (unix_usb_enum_hcd) and wineusb.c
 # gains the device objects and IOCTL handlers, spliced in from
-# upstream/rbw-usbhcd.c so the change stays reviewable in one place.
+# upstream/patches/rbw-usbhcd.c so the change stays reviewable in one place.
 #
 # Both halves have to be rebuilt and installed: wineusb.sys is the PE driver and
 # wineusb.so is its unix side, and they must match.
 #
 # Usage: bin/build-wineusb-hcd.sh          build only, into artifacts/winedll/
-#        sudo bin/install-wineusb-hcd.sh   install (separate, asks for root)
+#        sudo research/retired/install-wineusb-hcd.sh   install (separate, asks for root)
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 ROOT="$PWD"
@@ -41,8 +41,8 @@ cd "$SRC"
 if grep -q "$MARKER" dlls/wineusb.sys/wineusb.c; then
   echo "wineusb.c already carries the $MARKER block"
 else
-  echo "splicing $ROOT/upstream/rbw-usbhcd.c into dlls/wineusb.sys/wineusb.c"
-  python3 - "$ROOT/upstream/rbw-usbhcd.c" <<'PY'
+  echo "splicing $ROOT/upstream/patches/rbw-usbhcd.c into dlls/wineusb.sys/wineusb.c"
+  python3 - "$ROOT/upstream/patches/rbw-usbhcd.c" <<'PY'
 import sys, re
 block = open(sys.argv[1]).read()
 p = "dlls/wineusb.sys/wineusb.c"
@@ -81,15 +81,15 @@ PY
 fi
 
 grep -q "$MARKER" dlls/wineusb.sys/wineusb.c || { echo "splice failed"; exit 1; }
-# The unix half lives in upstream/0010, not in the splice, because it is an
+# The unix half lives in upstream/patches/0010, not in the splice, because it is an
 # ordinary diff against two files. bin/build-patched-dlls.sh applies the whole
 # 0*.patch series and so will already have done this; apply it here too so this
 # script also works standalone. Without it the build produced a wineusb.sys
 # whose only caller of the new unixlib entry point had nothing to call --
 # and, worse, the enumeration existed ONLY in a developer's working tree.
 if ! grep -q "$MARKER" dlls/wineusb.sys/unixlib.c; then
-  if patch -p1 --dry-run -s -f < "$ROOT/upstream/0010-wineusb-hcd-unixlib.patch" >/dev/null 2>&1; then
-    patch -p1 -s < "$ROOT/upstream/0010-wineusb-hcd-unixlib.patch"
+  if patch -p1 --dry-run -s -f < "$ROOT/upstream/patches/0010-wineusb-hcd-unixlib.patch" >/dev/null 2>&1; then
+    patch -p1 -s < "$ROOT/upstream/patches/0010-wineusb-hcd-unixlib.patch"
     echo "applied 0010-wineusb-hcd-unixlib.patch"
   else
     echo "unixlib.c is missing the $MARKER enumeration and 0010 will not apply"; exit 1
@@ -142,4 +142,4 @@ echo
 echo "built, both halves carry the $MARKER marker:"
 ls -l "$ROOT/artifacts/winedll/wineusb.sys" "$ROOT/artifacts/winedll/wineusb.so"
 echo
-echo "install with:  sudo $ROOT/bin/install-wineusb-hcd.sh"
+echo "install with:  sudo $ROOT/research/retired/install-wineusb-hcd.sh"

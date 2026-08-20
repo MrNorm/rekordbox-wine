@@ -29,7 +29,7 @@
 #   KNOWN CEILING: AvSetMmThreadCharacteristics is a stub in Wine, so no audio
 #   thread gets real-time priority. The package therefore ships a 512-sample
 #   buffer (11.6 ms), which is what a DDJ-400 user runs on Windows anyway. Going
-#   lower costs roughly one stream teardown every 330 s. See THEMES/T10.
+#   lower costs roughly one stream teardown every 330 s. See docs/investigation/THEMES/T10.
 #
 # ROOT, AND WHY: four of the fixes are unix-side or driver-side Wine libraries
 # that DllOverrides cannot reach, so they must replace files owned by the `wine`
@@ -46,7 +46,7 @@ pkgver=0.2.0
 pkgrel=1
 pkgdesc="Patched Wine components and launcher for running rekordbox 7.2.x with a DDJ-400 on Linux"
 arch=('x86_64')
-url="https://github.com/REPLACE-ME/rekordbox-wine"
+url="https://github.com/MrNorm/rekordbox-wine"
 license=('LGPL-2.1-or-later')  # the Wine patches; the launcher scripts are MIT
 
 # wine-staging is what every measurement in this project was made against.
@@ -61,7 +61,7 @@ makedepends=('clang' 'lld' 'python' 'curl' 'flex' 'bison' 'libx11' 'libxext'
              'alsa-lib' 'dbus' 'freetype2' 'gnutls')
 optdepends=(
   'pipewire-alsa: audio routing alongside other applications'
-  'rtkit: lets audio threads obtain real-time priority. Without it the desktop portal advertises no realtime budget, libpipewire-module-rt sets RLIMIT_RTTIME to zero inside every ALSA client, and any thread later put on a real-time policy is killed by SIGXCPU. See THEMES/T12'
+  'rtkit: lets audio threads obtain real-time priority. Without it the desktop portal advertises no realtime budget, libpipewire-module-rt sets RLIMIT_RTTIME to zero inside every ALSA client, and any thread later put on a real-time policy is killed by SIGXCPU. See docs/investigation/THEMES/T12'
   'wine-mono: .NET support inside the prefix'
   'wine-gecko: embedded browser support inside the prefix'
 )
@@ -88,7 +88,7 @@ build() {
   export RBW_WINE_BUILD="$srcdir/wine-build"
 
   # Downloads the Wine source matching the version installed on THIS machine,
-  # applies upstream/0001..0009, configures once, and builds the seven
+  # applies upstream/patches/0001..0009, configures once, and builds the seven
   # components. Version-matching is deliberate: a library built from a different
   # source tree may still load, and nothing about debugging that is worth
   # anyone's time.

@@ -9,7 +9,7 @@ for ~1 s and then comes back.
 
 Polls at ~500 Hz (one 200-byte read, negligible), prints one line per edge with
 a CLOCK_MONOTONIC stamp so it can be aligned with `perf record -k CLOCK_MONOTONIC`
-and with bin/queueburst.py, which uses the same clock.
+and with research/probes/queueburst.py, which uses the same clock.
 
 Usage: bin/teardownmark.py <card> <seconds> [outfile]
 """

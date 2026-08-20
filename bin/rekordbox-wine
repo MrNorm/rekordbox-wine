@@ -228,7 +228,7 @@ fi
 # message (alsa.lua:425 concatenates a nil node.name) — so the node is never
 # retried and the DEVICE DISAPPEARS from the desktop until wireplumber is
 # restarted. Measured on this machine 2026-08-17: every sink on the system gone
-# for hours, reproduced Wine-free in 30 s by bin/pwclash.sh. See THEMES/T09.
+# for hours, reproduced Wine-free in 30 s by research/probes/pwclash.sh. See docs/investigation/THEMES/T09.
 #
 # A user who has just finished a set should not have to know any of that, so:
 # detect the state and repair it. Restarting wireplumber is harmless — it
@@ -238,7 +238,7 @@ if command -v pactl >/dev/null 2>&1; then
   if [[ "${sinks:-0}" -eq 0 ]]; then
     if [[ $MODE == check ]]; then
       bad "PipeWire has no real audio sinks — the desktop has lost its devices"
-      note "repair: systemctl --user restart wireplumber   (see THEMES/T09)"
+      note "repair: systemctl --user restart wireplumber   (see docs/investigation/THEMES/T09)"
     else
       warn "PipeWire has no real audio sinks — restarting wireplumber"
       systemctl --user restart wireplumber 2>/dev/null && sleep 2
@@ -372,7 +372,7 @@ if [[ -r /proc/self/limits ]]; then
     warn "rtkit-daemon is not running — no audio thread can obtain real-time priority"
     note "Not fatal at the shipped 512-sample buffer, but RLIMIT_RTTIME is then"
     note "forced to zero inside this process and any real-time policy applied to"
-    note "one of its threads kills it silently. See THEMES/T12."
+    note "one of its threads kills it silently. See docs/investigation/THEMES/T12."
     note "Install with:  sudo pacman -S rtkit && sudo systemctl enable --now rtkit-daemon"
   fi
 fi
@@ -464,7 +464,7 @@ else
 fi
 
 # --------------------------------------------------------------- audio settings
-# THE PC MASTER OUT FIX. THEMES/T10 phases 34-42.
+# THE PC MASTER OUT FIX. docs/investigation/THEMES/T10 phases 34-42.
 #
 # rekordbox will not produce ANY audio until every output device has completed
 # three seconds' worth of callbacks, and it then keeps each device's queue three
@@ -541,18 +541,18 @@ if [[ $MODE == check ]]; then
   cat <<'EOF'
   · No exported USB stick has ever been read by a real CDJ. The export itself
     works and bin/pdbcheck.py validates the database outside Wine, but that is
-    a gate, not a finish line. See THEMES/T02.
+    a gate, not a finish line. See docs/investigation/THEMES/T02.
   · The DDJ-400 has never been through a full performance pass — every pad
     mode, the FX section, filters, crossfader curve, headphone cue, hot cues.
-    Jog wheels and LEDs are confirmed. See THEMES/T05.
+    Jog wheels and LEDs are confirmed. See docs/investigation/THEMES/T05.
   · Latency is 512 samples (11.6 ms), which is what a DDJ-400 user runs on
     Windows too. Lower costs about one stream teardown every 330 s, because
     AvSetMmThreadCharacteristics is still a stub in Wine and no audio thread
-    gets real-time priority. See THEMES/T10.
+    gets real-time priority. See docs/investigation/THEMES/T10.
   · Frame rate is healthy and measured: 58 fps with a track loaded, zero
     dropped frames. With both decks empty rekordbox runs its own 33 ms frame
     limiter and idles at 30 fps — that is the application's design, not a
-    fault. Re-measure with bin/fpsmatrix.sh if it ever feels wrong.
+    fault. Re-measure with research/probes/fpsmatrix.sh if it ever feels wrong.
 EOF
   [[ $FAIL -eq 0 ]] && printf '\n\033[32mAll configured steps verified.\033[0m\n' \
                     || printf '\n\033[31mSome steps failed — see FAIL lines above.\033[0m\n'

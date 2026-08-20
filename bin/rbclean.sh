@@ -76,7 +76,7 @@ bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; }
 # The exe check is not decoration. Any harness script that exports WINEPREFIX --
 # which every launcher here does -- puts its own shell, and this script, inside
 # the environ match. Without it rbclean SIGTERMs the thing that called it:
-# measured, bin/fpsmatrix.sh died with "Terminated" on its first cleandown and
+# measured, research/probes/fpsmatrix.sh died with "Terminated" on its first cleandown and
 # every later variant then failed to launch. Only a process whose exe resolves
 # into a wine path is a Wine process; bash, python and xdotool are not.
 prefix_pids() {

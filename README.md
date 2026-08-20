@@ -45,7 +45,7 @@ You can prove it at any time:
 ```
 
 That reads `/proc/<pid>/maps`, so it reports what the running process actually
-loaded rather than what is on disk. See [`THEMES/T13`](THEMES/) for why that
+loaded rather than what is on disk. See [`docs/investigation/THEMES/T13`](docs/investigation/THEMES/) for why that
 distinction cost a day.
 
 To uninstall completely, remove the package and delete
@@ -54,7 +54,7 @@ To uninstall completely, remove the package and delete
 ## What works
 
 Measured, with a run id behind every claim in
-[`GOLD-STATUS.md`](GOLD-STATUS.md):
+[`docs/GOLD-STATUS.md`](docs/GOLD-STATUS.md):
 
 - The application renders and repaints. **Stock Wine paints one frame and
   freezes** — this is why nobody had reported rekordbox 7.2.x running at all.
@@ -80,7 +80,7 @@ have been tested:
 
 ## What was actually wrong with Wine
 
-Twelve defects, ten fixed. The patches are in [`upstream/`](upstream/) and are
+Twelve defects, ten fixed. The patches are in [`upstream/patches/`](upstream/patches/) and are
 meant to go upstream — that is the point of the exercise.
 
 | # | component | defect |
@@ -99,7 +99,7 @@ meant to go upstream — that is the point of the exercise.
 | 12 | `mmdevapi` | `RegisterAudioSessionNotification` returns `S_OK` and never calls back — **reported** |
 
 And one defect that was ours, written up in
-[`upstream/NOTES-mmdevapi-buffer-widening.md`](upstream/): patch 2 widened the
+[`upstream/reports/NOTES-mmdevapi-buffer-widening.md`](upstream/): patch 2 widened the
 exclusive buffer to four periods, rekordbox reads that back through
 `GetBufferSize()` and uses it as its audio block size, and that single factor of
 four broke PC MASTER OUT for five days. *Widening a client's buffer is not
@@ -112,13 +112,13 @@ sessions:
 
 | | |
 |---|---|
-| [`STATE.md`](STATE.md) | current hypothesis and the single next action |
-| [`JOURNAL.md`](JOURNAL.md) | append-only timeline |
-| [`THEMES/`](THEMES/) | one file per investigation theme, each with its root-cause analysis |
-| [`GOLD-STATUS.md`](GOLD-STATUS.md) | every capability, its state, and the evidence |
-| [`REMAINING-STEPS-TO-GOLD.md`](REMAINING-STEPS-TO-GOLD.md) | what is left, who can do it, and how we would know |
-| [`PACKAGE.md`](PACKAGE.md) | what the package installs and why |
-| [`REGRESSION.md`](REGRESSION.md) | the tests that must pass before a release |
+| [`docs/investigation/STATE.md`](docs/investigation/STATE.md) | current hypothesis and the single next action |
+| [`docs/investigation/JOURNAL.md`](docs/investigation/JOURNAL.md) | append-only timeline |
+| [`docs/investigation/THEMES/`](docs/investigation/THEMES/) | one file per investigation theme, each with its root-cause analysis |
+| [`docs/GOLD-STATUS.md`](docs/GOLD-STATUS.md) | every capability, its state, and the evidence |
+| [`docs/REMAINING-STEPS-TO-GOLD.md`](docs/REMAINING-STEPS-TO-GOLD.md) | what is left, who can do it, and how we would know |
+| [`docs/PACKAGE.md`](docs/PACKAGE.md) | what the package installs and why |
+| [`docs/REGRESSION.md`](docs/REGRESSION.md) | the tests that must pass before a release |
 | `runs/` | per-run evidence: manifest, log, screenshots, verdict |
 
 `bin/rbw` is the harness. Run it with no arguments for the commands.
@@ -128,7 +128,7 @@ nothing and gdb crashed the application three times out of three, was
 **LBR call-graph profiling** — `perf record -e cycles:u --call-graph lbr` needs
 no unwind information at all — combined with **hardware execute breakpoints**
 (`perf record -e mem:<addr>:x`) to count how often a specific instruction in a
-stripped 100 MB binary actually ran. See [`THEMES/T10`](THEMES/).
+stripped 100 MB binary actually ran. See [`docs/investigation/THEMES/T10`](docs/investigation/THEMES/).
 
 ## Licence
 

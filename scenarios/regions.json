@@ -1,6 +1,6 @@
 {
   "_comment": [
-    "Named UI regions for bin/uiassert.py, as fractions of the rekordbox window.",
+    "Named UI regions for research/probes/uiassert.py, as fractions of the rekordbox window.",
     "Fractional so they survive a resize; calibrated against",
     "runs/CALIB/main.png (2050x1164) on 2026-08-14 in PERFORMANCE view.",
     "",
@@ -81,7 +81,7 @@
   "audio_prefs": {
     "_comment": [
       "Preferences -> Audio pane. Used by bin/audiotest.sh via",
-      "`bin/uiassert.py --block audio_prefs`.",
+      "`research/probes/uiassert.py --block audio_prefs`.",
       "",
       "WHAT THIS IS FOR: the Sample Rate dropdown silently went empty once",
       "already (T03) and nobody noticed for a session. A headless probe cannot",

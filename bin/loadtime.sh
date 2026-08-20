@@ -42,7 +42,7 @@ DY=290
 # dialog and this script reports "the drag did not load anything" — which
 # reads like a coordinate bug and is not one.
 "$(dirname "${BASH_SOURCE[0]}")/dismiss.sh" --quiet || {
-  echo "   FAULT: a dialog is covering the UI (see bin/dismiss.sh). Not"
+  echo "   FAULT: a dialog is covering the UI (see research/probes/dismiss.sh). Not"
   echo "          attempting the drag — the result would be meaningless."
   exit 2
 }

@@ -1,0 +1,6 @@
+# Gate 1 sweep — one variable per row. Unattended: ./bin/rbw matrix research/matrix/gate1.txt
+--recipe rb7 --label baseline-x11
+--recipe rb7 --label wayland --driver wayland
+--recipe rb7 --label nodebug --debug -all
+--recipe rb6 --label baseline-x11
+--recipe rb6 --label wayland --driver wayland

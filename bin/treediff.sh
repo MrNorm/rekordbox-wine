@@ -6,7 +6,7 @@
 # three times in one session and missed something every time:
 #
 #   * the wineusb unixlib enumeration, which existed ONLY in a working tree and
-#     was in no patch at all (now upstream/0010)
+#     was in no patch at all (now upstream/patches/0010)
 #   * an RBW-MMCSS block in dlls/avrt/main.c, likewise unshipped
 #   * RBW-PAINT and RBW-SESSION instrumentation in d2d1 and mmdevapi
 #
@@ -16,7 +16,7 @@
 #
 # Usage: bin/treediff.sh [pristine-tree]
 #   With no argument it extracts a pristine Wine of the matching version and
-#   applies upstream/0*.patch to it.
+#   applies upstream/patches/0*.patch to it.
 set -uo pipefail
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
 ROOT="$PWD"
@@ -32,14 +32,14 @@ if [[ -z "$REF" ]]; then
   [[ -f "$TARBALL" ]] || { echo "no pristine tarball at $TARBALL"; exit 2; }
   echo "extracting a pristine reference (this takes a moment)..."
   tar -C "$(dirname "$REF")" -xf "$TARBALL"
-  for p in "$ROOT"/upstream/0*.patch; do
+  for p in "$ROOT"/upstream/patches/0*.patch; do
     (cd "$REF" && patch -p1 -s -f < "$p" >/dev/null 2>&1) \
       || echo "  warning: $(basename "$p") did not apply cleanly"
   done
 fi
 
 echo "working tree : $WORK"
-echo "reference    : pristine wine-$WINE_VER + upstream/0*.patch"
+echo "reference    : pristine wine-$WINE_VER + upstream/patches/0*.patch"
 echo
 
 # Source files only. Build products, generated headers and compiled tools differ
@@ -60,7 +60,7 @@ fi
 
 echo "${#diffs[@]} source file(s) diverge from the series:"
 echo
-ALLOW="$ROOT/upstream/expected-divergence.txt"
+ALLOW="$ROOT/upstream/patches/expected-divergence.txt"
 rc=0
 for f in "${diffs[@]}"; do
   # widl regenerates these during any build and records its own input path in
@@ -82,11 +82,11 @@ for f in "${diffs[@]}"; do
 done
 echo
 if [[ $rc -eq 0 ]]; then
-  echo -e "\033[32mEvery divergence is a reviewed, debug-only entry in upstream/expected-divergence.txt.\033[0m"
+  echo -e "\033[32mEvery divergence is a reviewed, debug-only entry in upstream/patches/expected-divergence.txt.\033[0m"
   echo "None of it can reach a package: builds come from the series into a clean tree."
 else
   echo -e "\033[31mUnreviewed divergence — a fix may exist ONLY in this working tree.\033[0m"
   echo "Capture it as a patch in upstream/, delete it, or add it to"
-  echo "upstream/expected-divergence.txt with a reason if it is debug-only."
+  echo "upstream/patches/expected-divergence.txt with a reason if it is debug-only."
 fi
 exit $rc

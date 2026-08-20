@@ -61,7 +61,7 @@ set -u -o pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUTDIR="$HERE/runs/AUDIOTEST"
 REGIONS="$HERE/scenarios/regions.json"
-UIASSERT="$HERE/bin/uiassert.py"
+UIASSERT="$HERE/research/probes/uiassert.py"
 STAMP="$(date +%Y%m%dT%H%M%S)"
 
 WINEPREFIX_DEFAULT="$HERE/prefixes/rb7"

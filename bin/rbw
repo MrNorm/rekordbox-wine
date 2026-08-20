@@ -555,13 +555,13 @@ PY
 cmd_journal() {
   local msg="$*"; [[ -n "$msg" ]] || die "usage: rbw journal <message>"
   local last; last="$(tail -1 "$INDEX" 2>/dev/null | py -c 'import sys,json;print(json.loads(sys.stdin.read() or "{}").get("run_id",""))' 2>/dev/null)"
-  { echo; echo "### $(date -Is)"; [[ -n "$last" ]] && echo "_last run: \`$last\`_"; echo; echo "$msg"; } >> "$ROOT/JOURNAL.md"
+  { echo; echo "### $(date -Is)"; [[ -n "$last" ]] && echo "_last run: \`$last\`_"; echo; echo "$msg"; } >> "$ROOT/docs/investigation/JOURNAL.md"
   ok "appended to JOURNAL.md"
 }
 
 cmd_status() {
   echo "── STATE ──────────────────────────────────────────"
-  sed -n '1,40p' "$ROOT/STATE.md" 2>/dev/null
+  sed -n '1,40p' "$ROOT/docs/investigation/STATE.md" 2>/dev/null
   echo
   echo "── last 10 runs ───────────────────────────────────"
   if [[ -s "$INDEX" ]]; then
@@ -612,7 +612,7 @@ rbw — rekordbox-under-Wine experiment harness
   rbw matrix <file>              run many experiments unattended
   rbw classify <run-id>          triage a run's wine.log
   rbw diff <runA> <runB>         normalised log diff between two runs
-  rbw journal <message>          append a timestamped note to JOURNAL.md
+  rbw journal <message>          append a timestamped note to docs/investigation/JOURNAL.md
   rbw status                     current state + recent runs
 
 recipes: $(ls "$RECIPES" 2>/dev/null | sed 's/\.recipe//' | tr '\n' ' ')

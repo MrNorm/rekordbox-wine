@@ -4,8 +4,8 @@ This repository contains two kinds of work under two licences.
 1. The Wine patches — LGPL-2.1-or-later
 ================================================================================
 
-Everything under upstream/ that patches Wine (upstream/0*.patch and
-upstream/rbw-usbhcd.c) is a derivative of Wine and is licensed under the GNU
+Everything under upstream/ that patches Wine (upstream/patches/0*.patch and
+upstream/patches/rbw-usbhcd.c) is a derivative of Wine and is licensed under the GNU
 Lesser General Public License, version 2.1 or (at your option) any later
 version, matching Wine itself.
 

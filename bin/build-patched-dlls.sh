@@ -3,7 +3,7 @@
 # from a PRISTINE Wine source tree and the patch series in upstream/.
 #
 # This is the script the AUR package runs, so it must be able to start from
-# nothing: it fetches the matching Wine source, applies upstream/0*.patch in
+# nothing: it fetches the matching Wine source, applies upstream/patches/0*.patch in
 # order, configures, builds, and then VERIFIES that every component carries its
 # marker string. A component that silently built without its patch is the
 # failure mode this project has paid for repeatedly -- a stock build loads fine
@@ -55,7 +55,7 @@ want() { [[ $NWANT -eq 0 || " ${WANT[*]} " == *" $1 "* ]]; }
 
 # Check the version BEFORE downloading 46 MB and configuring for five minutes,
 # only to fail on patch three with a diff error the user cannot act on.
-SUPPORTED="$ROOT/upstream/supported-wine.txt"
+SUPPORTED="$ROOT/upstream/patches/supported-wine.txt"
 if [[ -f "$SUPPORTED" ]] && ! grep -qE "^[[:space:]]*${WINE_VER//./\.}([[:space:]]|$)" "$SUPPORTED"; then
   if [[ "${RBW_ALLOW_UNTESTED_WINE:-0}" != 1 ]]; then
     echo "wine $WINE_VER is not a version this patch series has been tested against."
@@ -91,7 +91,7 @@ fi
 # never produced.
 echo
 echo "=== patch series ==="
-for p in "$ROOT"/upstream/0*.patch; do
+for p in "$ROOT"/upstream/patches/0*.patch; do
   name="$(basename "$p")"
   if (cd "$SRC" && patch -p1 -R --dry-run -s -f < "$p" >/dev/null 2>&1); then
     echo "  already applied  $name"
@@ -204,7 +204,7 @@ done
 
 # ---------------------------------------------------------------- wineusb
 # Not part of the 0001..0009 series: it is a source splice from
-# upstream/rbw-usbhcd.c rather than a patch, so it has its own build script.
+# upstream/patches/rbw-usbhcd.c rather than a patch, so it has its own build script.
 # It is built here anyway, because it is MANDATORY for the controller -- without
 # \\.\HCDn, rekordbox's USB validation fails, it destroys the Pioneer device
 # object it just built, and never opens the controller's MIDI port. A package
@@ -235,4 +235,4 @@ fi
 echo
 echo "built and verified: ${built[*]}"
 echo "  prefix DLLs      -> artifacts/*-patched-native-$WINE_VER.dll"
-echo "  system libraries -> artifacts/winedll/   (install with bin/install-system-wine-patches.sh)"
+echo "  system libraries -> artifacts/winedll/   (install with research/retired/install-system-wine-patches.sh)"
