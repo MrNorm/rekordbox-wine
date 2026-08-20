@@ -1,15 +1,8 @@
 # Maintainer: see upstream repository
 #
-# THE PRIMARY PKGBUILD. It builds straight from the GitHub repository, because
-# this project is deliberately not on the AUR -- AUR pushes have been blocked
-# over malware injection, and a package whose whole argument is "audit the
-# chain" should not ask you to trust that chain.
-#
-#   git clone https://github.com/MrNorm/rekordbox-wine.git
-#   cd rekordbox-wine/packaging && makepkg -si
-#
-# PKGBUILD.release beside this one builds from a tagged release tarball and is
-# what an AUR submission would use, if that ever becomes appropriate.
+# Release-tarball variant, kept for a future tagged release. The PKGBUILD people
+# actually use is the git one beside this file, which builds from the GitHub
+# URL. sha256sums must be filled against a real tag before this is used.
 #
 # rekordbox-wine — the Wine patches and configuration that rekordbox 7.2.x needs
 # on Linux, plus a launcher that verifies every one of them before starting.
@@ -52,7 +45,7 @@
 # the command if they are missing. The real fix is upstream; that is what the
 # patches in /usr/share/doc/rekordbox-wine/patches are for.
 
-pkgname=rekordbox-wine-git
+pkgname=rekordbox-wine
 pkgver=0.2.0
 pkgrel=1
 pkgdesc="Patched Wine components and launcher for running rekordbox 7.2.x with a DDJ-400 on Linux"
@@ -62,14 +55,12 @@ license=('LGPL-2.1-or-later')  # the Wine patches; the launcher scripts are MIT
 
 # wine-staging is what every measurement in this project was made against.
 # Plain wine may work; it has not been tested, so it is not claimed.
-provides=('rekordbox-wine')
-conflicts=('rekordbox-wine')
 depends=('wine-staging' 'alsa-lib' 'alsa-utils' 'python')
 # The build compiles Wine libraries from the matching Wine source, so it needs
 # what Wine itself needs. X11 and ALSA headers are load-bearing: without them
 # Wine's configure quietly drops winex11.drv and winealsa.drv and the build
 # would otherwise produce a package with two of the fixes missing and no error.
-makedepends=('git' 'clang' 'lld' 'python' 'curl' 'flex' 'bison' 'libx11' 'libxext'
+makedepends=('clang' 'lld' 'python' 'curl' 'flex' 'bison' 'libx11' 'libxext'
              'libxrandr' 'libxcomposite' 'libxfixes' 'libxi' 'libxcursor'
              'alsa-lib' 'dbus' 'freetype2' 'gnutls')
 optdepends=(
@@ -78,7 +69,7 @@ optdepends=(
   'wine-mono: .NET support inside the prefix'
   'wine-gecko: embedded browser support inside the prefix'
 )
-install=rekordbox-wine.install
+install="$pkgname.install"
 
 # Wine cannot be built with link-time optimisation: LTO drops the symbols that
 # ntdll's hand-written syscall dispatcher references from assembly, and the
@@ -88,19 +79,11 @@ install=rekordbox-wine.install
 # by binutils here.
 options=('!lto' '!strip' '!debug')
 
-# Built straight from GitHub — no AUR involved. Cloning the canonical URL is
-# what makes this reproducible: makepkg records the commit it built.
-source=("rekordbox-wine::git+$url.git")
-sha256sums=('SKIP')   # a git source is verified by its revision, not a hash
-
-pkgver() {
-  cd "$srcdir/rekordbox-wine"
-  # 0.2.0.r<commits>.g<short-sha> — sorts correctly and names the exact commit.
-  printf "%s.r%s.g%s" "0.2.0" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
-}
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')  # replace with the real hash at release
 
 build() {
-  cd "$srcdir/rekordbox-wine"
+  cd "$srcdir/$pkgname-$pkgver"
 
   # Build inside $srcdir, not in ~/.cache. A developer's cache holds a Wine tree
   # that already has the series applied AND whatever diagnostic code was being
@@ -117,7 +100,7 @@ build() {
 }
 
 check() {
-  cd "$srcdir/rekordbox-wine"
+  cd "$srcdir/$pkgname-$pkgver"
   # Every patched component carries a distinctive marker string. If a marker is
   # missing, the build silently produced a stock component — the failure mode
   # that has cost this project whole sessions, because a stock library loads
@@ -156,7 +139,7 @@ check() {
 }
 
 package() {
-  cd "$srcdir/rekordbox-wine"
+  cd "$srcdir/$pkgname-$pkgver"
   # One definition of the payload, shared with debian/rules and the rpm spec.
   packaging/install-tree.sh "$pkgdir"
 }

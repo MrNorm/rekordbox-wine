@@ -15,11 +15,51 @@ stop. If you want to know *why* Wine needed nine patches, everything after
 
 ## Install
 
+**This is not on the AUR**, and deliberately so — AUR pushes have been blocked
+over malware injection, and the point of this project is a chain you can audit.
+Install it straight from this repository instead.
+
+### Arch, from GitHub
+
 ```sh
-paru -S rekordbox-wine                                   # or yay
+git clone https://github.com/MrNorm/rekordbox-wine.git
+cd rekordbox-wine/packaging
+makepkg -si
+```
+
+`packaging/PKGBUILD` clones this repository by URL and records the exact commit it
+built in the package version (`0.2.0.r<commits>.g<short-sha>`), so you can always
+see what you installed. Everything is compiled on your machine against the Wine
+you actually have — no binaries are downloaded.
+
+The first build compiles the Wine components from the patch series and takes
+roughly 20–30 minutes. Subsequent installs reuse the cached Wine source.
+
+Prefer `paru` to do the installing? It builds from AUR or from package *files*,
+not from a local PKGBUILD directory, so hand it the result:
+
+```sh
+paru -U rekordbox-wine-git-*.pkg.tar.zst
+```
+
+To update later:
+
+```sh
+cd rekordbox-wine && git pull
+cd packaging && makepkg -si
+```
+
+### Then, on any distribution
+
+```sh
 rekordbox-wine --install ~/Downloads/rekordbox_7.2.18.exe
 rekordbox-wine
 ```
+
+Debian/Ubuntu and Fedora packaging live in `packaging/debian/` and
+`packaging/rekordbox-wine.spec`. Both are complete and produce identical
+payloads, but see the note on portability at the end — they have not yet been
+built on their own distributions.
 
 That is the whole setup, and none of it needs root. rekordbox itself is
 proprietary and not included — download it from

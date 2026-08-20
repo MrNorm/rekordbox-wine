@@ -233,3 +233,37 @@ kept launching a stale build after any update; fixed.
 **Wine upgrades** are handled by the private tree recording its Wine version and
 the launcher rebuilding on mismatch. The patch series itself is deliberately
 pinned — see `upstream/patches/supported-wine.txt`.
+
+## Not on the AUR — added 2026-08-20
+
+This project is **deliberately not published to the AUR.** AUR pushes have been
+blocked over malware injection, and a package whose entire argument is "audit
+the chain yourself" should not ask you to trust that chain.
+
+`packaging/PKGBUILD` is therefore a **VCS PKGBUILD** that clones the GitHub
+repository by URL:
+
+    source=("rekordbox-wine::git+https://github.com/MrNorm/rekordbox-wine.git")
+    pkgver()  ->  0.2.0.r<commits>.g<short-sha>
+
+The package version names the exact commit it was built from, so what is
+installed is always traceable to a revision you can read. Nothing prebuilt is
+downloaded — every Wine component is compiled on the user's machine, against the
+Wine they actually have, and `check()` verifies all nine markers before the
+package is created.
+
+    git clone https://github.com/MrNorm/rekordbox-wine.git
+    cd rekordbox-wine/packaging && makepkg -si
+
+Verified end to end on 2026-08-20: clone, build all eight components, `check()`
+pass, `rekordbox-wine-git-0.2.0.r4.g9af43ae-1-x86_64.pkg.tar.zst`, 60 files, all
+markers present. First build is ~20-30 minutes because it compiles Wine
+components; later ones reuse the cached Wine source.
+
+`packaging/PKGBUILD.release` is the tarball variant, kept for a tagged release
+if AUR publication ever becomes appropriate. Its `sha256sums` is still `SKIP`
+and must be filled against a real tag before use.
+
+**`paru -U` takes package files, not PKGBUILD directories** — verified, it
+errors with "cannot open package file" on a directory. So the documented flow is
+`makepkg -si`, optionally handing the resulting file to `paru -U`.
