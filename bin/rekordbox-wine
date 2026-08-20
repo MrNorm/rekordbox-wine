@@ -414,7 +414,18 @@ fix_desktop_entries() {
     # the note accumulates a copy per run. Path= is dropped because it pointed
     # at the prefix the ORIGINAL entry used, and a stale directory there can
     # stop the entry launching at all -- our launcher chooses its own prefix.
-    sed -e 's|^Exec=.*|Exec=rekordbox-wine|' \
+    # PRESERVE THE PREFIX. The original Exec carries WINEPREFIX=..., and that is
+    # often NOT the default one -- a second install, a test prefix, or simply an
+    # older layout. Rewriting to a bare `rekordbox-wine` throws it away, and the
+    # launcher then falls back to ~/.local/share/rekordbox-wine/prefix, which may
+    # hold no rekordbox at all. That turns a WORKING menu entry into one that
+    # opens nothing, which is exactly what happened on the development machine.
+    local orig_prefix
+    orig_prefix="$(sed -n 's|^Exec=.*WINEPREFIX=\"\?\([^\"]*\)\"\?[[:space:]].*|\1|p' "$f" | head -1)"
+    local exec_line='Exec=rekordbox-wine'
+    [[ -n "$orig_prefix" ]] && exec_line="Exec=env RBW_PREFIX=\"$orig_prefix\" rekordbox-wine"
+
+    sed -e "s|^Exec=.*|$exec_line|" \
         -e 's|^Name=.*|Name=rekordbox 7 (via rekordbox-wine)|' \
         -e '/^Path=/d' -e '/^X-RBW-Rewritten=/d' \
         -e '/^# Rewritten by rekordbox-wine/,+2d' "$f" \

@@ -169,6 +169,35 @@ The fixtures use real Wine binaries in the right shape, which tests the script
 logic but not the distribution's own Wine build. That remains the second-machine
 item.
 
+## The menu-entry rewrite broke a working install — 2026-08-20
+
+Rewriting Wine's menu entry to `Exec=rekordbox-wine` **threw away the prefix**.
+The original carries `WINEPREFIX=...`, and on this machine that was
+`prefixes/rb7` — the working 7.2.18 install. Stripped of it, the launcher fell
+back to its default, `~/.local/share/rekordbox-wine/prefix`, which held no
+rekordbox at all. A menu entry that worked stopped opening anything.
+
+Reported as *"why does it no longer open on this machine???"*, and the report
+was correct: I broke it.
+
+Two lessons, both already project doctrine:
+
+- **A repair must preserve the state it is repairing.** The rewrite fixed the
+  *loader* and silently discarded the *prefix*, and only one of those was
+  broken. Anyone with a second install, a test prefix, or an older layout would
+  have hit this — the default prefix is not the only prefix.
+- **Testing on a fresh prefix cannot see it.** Every verification I ran used a
+  new prefix at the default path, where losing the prefix is invisible because
+  the fallback happens to be right. The bug needed a machine with a *non*-default
+  prefix, which is precisely the machine it was developed on.
+
+Fixed: the rewrite now extracts `WINEPREFIX` from the original `Exec` and emits
+
+    Exec=env RBW_PREFIX="<original prefix>" rekordbox-wine
+
+falling back to a bare `rekordbox-wine` only when the original names no prefix.
+Verified against a synthetic entry pointing at a non-default path.
+
 ## Open
 
 - The private tree is per-user under `~/.local/share`. A multi-user machine
