@@ -359,6 +359,72 @@ check_private_file "x86_64-windows/wineusb.sys" RBW-USBHCD \
 check_private_file "x86_64-unix/wineusb.so" RBW-USBHCD \
   "the HCD driver's unix half is missing and the PE half is its only caller"
 
+# --------------------------------------------------------- desktop entries
+# When rekordbox's installer runs, Wine writes Start Menu entries of its own
+# into ~/.local/share/applications/wine/Programs/rekordbox/. They are named
+# "rekordbox 7" -- which is what a user will look for -- and they launch the
+# SYSTEM wine directly:
+#
+#     Exec=env "WINEPREFIX=..." wine "C:\\...\\rekordbox 7.lnk"
+#
+# That bypasses the private Wine tree and the prefix DLL overrides entirely, so
+# it starts an unpatched rekordbox: one frame, then a freeze. The user sees two
+# entries in their menu, the obvious one is broken, and the software looks like
+# it does not work.
+#
+# Rather than tell people not to click it, point it at us. Rewritten entries are
+# marked so this is idempotent and so an entry we did not create is never
+# touched.
+fix_desktop_entries() {
+  local dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications/wine/Programs/rekordbox"
+  [[ -d "$dir" ]] || { ok "no Wine-generated menu entries to correct"; return; }
+  local found=0 fixed=0 f
+  while IFS= read -r -d '' f; do
+    # Test an explicit marker, NOT the Exec line. The Exec line embeds the
+    # prefix path, and the DEFAULT prefix is ~/.local/share/rekordbox-wine/prefix
+    # -- so matching '.*rekordbox-wine' matches the PATH and every entry looks
+    # already-rewritten. Measured: the repair silently did nothing on a machine
+    # whose prefix sat under a directory of that name, which is the default.
+    grep -q '^X-RBW-Rewritten=1' "$f" 2>/dev/null && continue
+    grep -qi 'uninstall' "$f" && continue                              # leave the uninstaller alone
+    found=$((found+1))
+    if [[ $MODE == check ]]; then continue; fi
+    # Keep the original once, so the change is reversible -- every system-level
+    # change in this project records how to undo it, and a menu entry is no
+    # exception. Restore with:  mv X.desktop.rbw-original X.desktop
+    [[ -f "$f.rbw-original" ]] || cp -a "$f" "$f.rbw-original"
+    local tmp; tmp="$(mktemp)"
+    # Strip any previous rewrite of ours before writing a new one: without this
+    # the note accumulates a copy per run. Path= is dropped because it pointed
+    # at the prefix the ORIGINAL entry used, and a stale directory there can
+    # stop the entry launching at all -- our launcher chooses its own prefix.
+    sed -e 's|^Exec=.*|Exec=rekordbox-wine|' \
+        -e 's|^Name=.*|Name=rekordbox 7 (via rekordbox-wine)|' \
+        -e '/^Path=/d' -e '/^X-RBW-Rewritten=/d' \
+        -e '/^# Rewritten by rekordbox-wine/,+2d' "$f" \
+      | sed -e '/^$/d' > "$tmp"
+    {
+      printf 'X-RBW-Rewritten=1\n'
+      printf '\n# Rewritten by rekordbox-wine. The original launched the system Wine\n'
+      printf '# directly, which starts an UNPATCHED rekordbox: one frame, then a\n'
+      printf '# freeze. See THEMES/T13-coexistence.md.\n'
+    } >> "$tmp"
+    cat "$tmp" > "$f" && rm -f "$tmp" && fixed=$((fixed+1))
+  done < <(find "$dir" -name '*.desktop' -print0 2>/dev/null)
+
+  if [[ $found -eq 0 ]]; then
+    ok "Wine's menu entries already point at rekordbox-wine"
+  elif [[ $MODE == check ]]; then
+    warn "$found Wine-generated menu entr(ies) launch the system Wine directly"
+    note "Clicking one starts an UNPATCHED rekordbox: one frame, then a freeze."
+    note "Run '$SELF --setup' to point them at this launcher."
+  else
+    warn "corrected $fixed Wine-generated menu entr(ies) to launch via $SELF"
+  fi
+}
+hdr "Desktop menu entries"
+fix_desktop_entries
+
 # ------------------------------------------------------------------- rtkit
 # Not required for the shipping 512-sample configuration, but a system without
 # it carries a live trap: xdg-desktop-portal then advertises no realtime budget,

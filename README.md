@@ -27,6 +27,41 @@ rekordbox-wine
 `rekordbox-wine` checks its own configuration before every start and repairs
 what it can. `rekordbox-wine --check` reports without changing anything.
 
+### Starting it: use the launcher, not Wine's own menu entry
+
+When rekordbox's installer runs, Wine writes its own Start Menu entries named
+**"rekordbox 7"**. Those launch the system Wine directly, bypassing the private
+Wine tree and the prefix overrides — so they start an *unpatched* rekordbox,
+which paints one frame and freezes. The obvious-looking entry is the broken one.
+
+`rekordbox-wine` fixes this rather than asking you to remember it: on every
+`--setup` and every launch it rewrites those entries to call the launcher, keeps
+the original beside them as `*.desktop.rbw-original`, and leaves the uninstaller
+alone. `--check` reports them without changing anything.
+
+So all of these work, and all start the same, correctly configured rekordbox:
+
+```sh
+rekordbox-wine                       # the command
+```
+
+- **rekordbox 7 (via rekordbox-wine)** — Wine's entry, corrected
+- **rekordbox (Wine)** — the entry this package installs
+
+### Updates
+
+Nothing is pinned to a version. The launcher finds the newest
+`rekordbox.exe` in the prefix, so a rekordbox update just works and Wine's
+regenerated menu entry is corrected again on the next start. The private Wine
+tree records which Wine it was built against and is rebuilt automatically when
+your distribution upgrades Wine — previously an upgrade silently reverted every
+fix.
+
+The one thing pinned on purpose is the Wine version the *patches* apply to:
+`upstream/patches/supported-wine.txt` lists what has been measured, and the
+build refuses an untested Wine with an explanation rather than failing halfway
+through with a patch error.
+
 ### It does not touch your system Wine
 
 Six of the fixes are unix libraries and drivers that Wine cannot override

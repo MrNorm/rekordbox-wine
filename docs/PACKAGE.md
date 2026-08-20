@@ -205,3 +205,31 @@ The package still installs three additive system files: the DDJ-400 udev rule
 a `modules-load.d` entry for `ntsync`. The blacklist is the only one with reach
 beyond us — anything relying on ALSA's "Midi Through" loopback loses it — and it
 is a one-line file the user can delete.
+
+## Menu entries and updates — added 2026-08-20
+
+**Wine's own Start Menu entry is a trap.** rekordbox's installer makes Wine
+write entries named "rekordbox 7" whose `Exec` is the system `wine` plus a
+`.lnk` path. They bypass the private Wine tree and the prefix DLL overrides, so
+they start an unpatched rekordbox: one frame, then a freeze. A user sees two
+entries and the obvious one is broken.
+
+`bin/rekordbox-wine` rewrites them to `Exec=rekordbox-wine` on every `--setup`
+and launch, marks them with `X-RBW-Rewritten=1`, keeps the original as
+`*.desktop.rbw-original`, drops the now-meaningless `Path=`, and skips the
+uninstaller entry. `--check` reports without changing anything.
+
+**Detecting "already rewritten" must not look at the `Exec` line.** The original
+`Exec` embeds the prefix path, and the default prefix is
+`~/.local/share/rekordbox-wine/prefix` — so a naive `Exec=.*rekordbox-wine`
+test matches the *path* and every entry looks already-done. Measured: the repair
+silently did nothing. Hence the explicit `X-RBW-Rewritten` key.
+
+**Nothing is pinned to a rekordbox version.** Both launchers resolve the newest
+`rekordbox.exe` with `find … | sort -V | tail -1`, so an application update is
+transparent. `bin/rekordbox` used to hardcode `rekordbox 7.2.18` and would have
+kept launching a stale build after any update; fixed.
+
+**Wine upgrades** are handled by the private tree recording its Wine version and
+the launcher rebuilding on mismatch. The patch series itself is deliberately
+pinned — see `upstream/patches/supported-wine.txt`.

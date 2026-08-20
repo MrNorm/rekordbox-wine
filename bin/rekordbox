@@ -10,7 +10,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export WINEPREFIX="${WINEPREFIX:-$ROOT/prefixes/rb7}"
 export WINEDLLOVERRIDES="dxgi=n${WINEDLLOVERRIDES:+,$WINEDLLOVERRIDES}"
-APP="$WINEPREFIX/drive_c/Program Files/rekordbox/rekordbox 7.2.18/rekordbox.exe"
+# Never hardcode the version: rekordbox updates itself, and a pinned path means
+# the harness silently keeps launching an old build -- or stops working at all.
+# Highest version wins, which is what the shipped launcher does too.
+APP="$(find "$WINEPREFIX/drive_c/Program Files/rekordbox" -maxdepth 2 -name 'rekordbox.exe' 2>/dev/null | sort -V | tail -1)"
+[ -n "$APP" ] || { echo "bin/rekordbox: no rekordbox.exe under $WINEPREFIX" >&2; exit 2; }
 
 want="$ROOT/artifacts/dxgi-patched-native-11.15.dll"
 have="$WINEPREFIX/drive_c/windows/system32/dxgi.dll"
