@@ -16,16 +16,39 @@ stop. If you want to know *why* Wine needed nine patches, everything after
 ## Install
 
 ```sh
-# from the AUR
-paru -S rekordbox-wine        # or: yay -S rekordbox-wine
-
-# install rekordbox itself and start it. No root, no further setup.
+paru -S rekordbox-wine                                   # or yay
 rekordbox-wine --install ~/Downloads/rekordbox_7.2.18.exe
 rekordbox-wine
 ```
 
-`rekordbox-wine` checks its own configuration before every start and repairs
-what it can. `rekordbox-wine --check` reports without changing anything.
+That is the whole setup, and none of it needs root. rekordbox itself is
+proprietary and not included — download it from
+[rekordbox.com](https://rekordbox.com) and sign in with your own AlphaTheta
+account.
+
+The launcher does the rest on **every** start, so it repairs itself if anything
+drifts: builds its private Wine tree, installs the patched DLLs into the prefix,
+applies the audio settings that make PC MASTER OUT work, and corrects Wine's own
+menu entry. `rekordbox-wine --check` reports all of it without changing
+anything.
+
+### Using a DDJ-400? Two one-off system steps
+
+These need root or a physical replug, so they cannot be done for you:
+
+- **Replug the controller once**, so the udev rule the package installed applies.
+- **Reboot, or `sudo modprobe -r snd_seq_dummy`**, so the module blacklist takes
+  effect. Without it rekordbox binds an ALSA loopback instead of your controller.
+
+`rekordbox-wine --check` tells you if either is still outstanding.
+
+### Updates: nothing to do
+
+- **rekordbox updates itself** — the launcher always starts the newest version
+  it finds, and re-corrects Wine's regenerated menu entry.
+- **Your distribution updates Wine** — the private tree records which Wine it
+  was built against and is rebuilt automatically. Under the old design a Wine
+  upgrade silently reverted every fix.
 
 ### Starting it: use the launcher, not Wine's own menu entry
 

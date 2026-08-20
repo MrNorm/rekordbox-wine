@@ -1,29 +1,41 @@
 post_install() {
   cat <<'EOF'
-
 rekordbox-wine is installed. It does NOT modify your system Wine.
 
-The fixes live in a private Wine tree (about 16 MB of symlinks to your system
-Wine, plus six patched files), built automatically on first run. Every other
-Wine application on this machine keeps using the distro's Wine, unchanged.
+Two commands, then you are done. Neither needs root.
 
-Two steps, neither needs root:
-
-  1. Install rekordbox itself. Not included -- it is proprietary. Download it
-     from rekordbox.com and sign in with your own AlphaTheta account.
+  1. Install rekordbox itself. It is proprietary and not included -- download
+     it from rekordbox.com, then:
 
        rekordbox-wine --install ~/Downloads/rekordbox_7.2.18.exe
 
-  2. Replug your controller so the new udev rule applies, and reboot (or
-     "sudo modprobe -r snd_seq_dummy") so the module blacklist takes effect.
+  2. Start it:
 
-Then:
+       rekordbox-wine
 
-       rekordbox-wine              launch
-       rekordbox-wine --check      verify every step, change nothing
-       /usr/share/rekordbox-wine/bin/verifyloaded.sh
-                                   confirm the RUNNING process really is using
-                                   the patched libraries
+That is the whole setup. The launcher builds its private Wine tree, installs
+the patched DLLs into the prefix, applies the audio settings and corrects
+Wine's own menu entry -- every time it starts, so it repairs itself if
+something drifts. You can also start it from your application menu.
+
+USING A DDJ-400? Two one-off system steps, because they need root or a replug:
+
+  - Replug the controller once, so the udev rule this package installed
+    applies to it.
+  - Reboot, or run "sudo modprobe -r snd_seq_dummy", so the module blacklist
+    takes effect. Without this rekordbox binds an ALSA loopback instead of
+    your controller.
+
+  "rekordbox-wine --check" tells you if either is still outstanding.
+
+UPDATES: nothing to do.
+  - rekordbox updates itself: the launcher always starts the newest version.
+  - Your distribution updates Wine: the private tree is rebuilt automatically.
+
+VERIFY ANYTHING:
+       rekordbox-wine --check                          report, change nothing
+       /usr/share/rekordbox-wine/bin/verifyloaded.sh   confirm the RUNNING
+                                                       process uses the fixes
 
 WHAT WORKS, measured: the window renders and repaints (stock Wine paints one
 frame and freezes); library, waveforms and two decks at 1.000x; the File menu

@@ -28,7 +28,25 @@ export WINEPREFIX="${RBW_PREFIX:-$PREFIX_DEFAULT}"
 # Wine's own dll dirs, where the stock builtins live. Detected rather than
 # hardcoded: Arch, Debian, Fedora and the WineHQ builds all put them somewhere
 # different, and a wrong path here reports as "your Wine is broken".
-. "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/winepaths.sh"
+# Where the package puts its helpers. Must be resolved BEFORE winepaths.sh is
+# sourced, because the lookup below uses it.
+DATADIR="${RBW_DATADIR:-/usr/share/rekordbox-wine}"
+[[ -d "$DATADIR" ]] || DATADIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# winepaths.sh sits beside this script in a source checkout, but the package
+# installs the launcher to /usr/bin and its helpers to /usr/share/rekordbox-wine/bin.
+# Looking only beside ourselves printed "No such file or directory" on every
+# single run of the INSTALLED launcher -- harmless only because detection has a
+# fallback, which is exactly the kind of luck not to depend on.
+for _wp in "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/winepaths.sh" \
+           "$DATADIR/bin/winepaths.sh" \
+           /usr/share/rekordbox-wine/bin/winepaths.sh; do
+  [[ -r "$_wp" ]] && { . "$_wp"; break; }
+done
+if [[ -z "${WINE_PE_DIR:-}" ]]; then
+  echo "rekordbox-wine: cannot find winepaths.sh — is the package installed correctly?" >&2
+  exit 1
+fi
 
 # The private Wine tree. Four of our fixes are unix-side libraries and two are
 # PE drivers, none of which DllOverrides can reach -- so they used to replace
@@ -45,8 +63,6 @@ WINE="$PRIVATE_WINE/bin/wine"
 # which one it used; never guess it here.
 PW_LIB="$(cat "$PRIVATE_WINE/.wine-layout" 2>/dev/null || echo lib/wine)"
 # Installed by the package; overridable for running out of a source checkout.
-DATADIR="${RBW_DATADIR:-/usr/share/rekordbox-wine}"
-[[ -d "$DATADIR" ]] || DATADIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MODE=launch
 INSTALLER=
@@ -561,8 +577,32 @@ fi
 hdr "Audio settings"
 SETTINGS="$(ls "$WINEPREFIX"/drive_c/users/*/AppData/Roaming/Pioneer/rekordbox6/rekordbox3.settings 2>/dev/null | head -1)"
 if [[ -z "$SETTINGS" ]]; then
-  note "no rekordbox3.settings yet — it appears after rekordbox has run once"
-  note "re-run this launcher afterwards to apply the PC MASTER OUT fix"
+  # rekordbox writes this file itself on first run -- but it MERGES an existing
+  # one, keeping values it finds and filling in the rest with its defaults
+  # (measured: a two-key seed came back with 97 keys, both seeded values
+  # intact). So seed it now rather than telling the user to start the
+  # application, quit, and start it again before PC MASTER OUT works. That
+  # instruction was the last manual step, and the kind of thing a new user does
+  # not do -- they would try PC MASTER OUT in their first session, hit the
+  # stall, and conclude the software is broken.
+  SEED_DIR="$(ls -d "$WINEPREFIX"/drive_c/users/*/AppData/Roaming 2>/dev/null | head -1)"
+  if [[ -n "$SEED_DIR" && $MODE != check ]]; then
+    SEED_DIR="$SEED_DIR/Pioneer/rekordbox6"
+    mkdir -p "$SEED_DIR"
+    cat > "$SEED_DIR/rekordbox3.settings" <<'SEEDEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+
+<PROPERTIES>
+  <VALUE name="WasapiPolling" val="1"/>
+  <VALUE name="AudioBufferSize" val="512"/>
+</PROPERTIES>
+SEEDEOF
+    ok "seeded the PC MASTER OUT audio settings — correct from the first launch"
+  elif [[ -n "$SEED_DIR" ]]; then
+    warn "no rekordbox3.settings yet — '$SELF --setup' will seed the PC MASTER OUT fix"
+  else
+    note "no prefix user directory yet — install rekordbox first with '$SELF --install'"
+  fi
 else
   RBW_SETTINGS="$SETTINGS" RBW_MODE="$MODE" python3 - <<'PYEOF'
 import os, re, sys
