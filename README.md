@@ -86,9 +86,9 @@ packaging/build-deb.sh        # Debian/Ubuntu  -> ../rekordbox-wine_*.deb
 packaging/build-rpm.sh        # Fedora         -> ~/rpmbuild/RPMS/x86_64/*.rpm
 ```
 
-The `.deb` is verified end to end on Debian trixie — built, markers checked
-inside the package, installed, launcher run. The `.rpm` build is newer; report
-anything that breaks.
+Both are built, marker-checked inside the package and installed on their own
+distributions by [`packages.yml`](.github/workflows/packages.yml) on every
+packaging change.
 
 **You need Wine from the [WineHQ repository](https://gitlab.winehq.org/wine/wine/-/wikis/Download)**,
 because the distribution's own Wine is too old for the patch series. Measured
