@@ -184,7 +184,11 @@ jobs:
       - name: The .rpm must contain the patches
         run: |
           set -euo pipefail
-          rpm_file="$(ls dist/rekordbox-wine-*.rpm | head -1)"
+          # Absolute: the subshell below cds into /tmp/x, and a relative
+          # dist/... path stops resolving the moment it does. rpm2archive then
+          # says "No such file or directory" and cpio reports a premature end of
+          # archive, which reads like a corrupt package rather than a bad path.
+          rpm_file="$(readlink -f "$(ls dist/rekordbox-wine-*.rpm | head -1)")"
           echo "inspecting $rpm_file"
           mkdir -p /tmp/x && (cd /tmp/x && rpm2cpio "$rpm_file" | cpio -idm --quiet)
           ver='${{ steps.wine.outputs.version }}'
