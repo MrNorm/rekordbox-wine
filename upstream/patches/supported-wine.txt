@@ -1,15 +1,56 @@
 # Wine versions this patch series is known to apply to and has been measured on.
-# One version per line. Lines starting with # are ignored.
 #
-# The series is NOT version-agnostic. It patches internals of winealsa.drv,
-# winex11.drv, mountmgr.sys, setupapi and dxgi; upstream moves that code, and a
-# patch that no longer applies is the good case. The bad case is a patch that
-# applies with fuzz to a function whose surrounding logic has changed.
+# FORMAT, because two scripts and a CI job parse this file: a version line is a
+# bare version at the start of a line and nothing else on it. Every other line
+# is a comment starting with '#'. Prose used to be written as indented
+# continuation lines, which made `awk '{print $1}'` report "rekordbox" and
+# "green," as supported Wine versions.
+#
+# THE SERIES TARGETS ONE WINE AT A TIME. This is a history, not a compatibility
+# matrix. Only the LAST version listed is the one the series in this tree
+# applies to; for an older one, check out the commit named against it.
 #
 # bin/build-patched-dlls.sh refuses an unlisted version unless
 # RBW_ALLOW_UNTESTED_WINE=1 is set. That is deliberately a speed bump, not a
 # wall: trying a new Wine is exactly how this list grows. If it works, add the
 # version here with the evidence, and say what you ran.
 #
-# version   status
-11.15       measured: every capability in GOLD-STATUS.md, wine-staging on Arch
+# ----------------------------------------------------------------------------
+# 11.15 — SUPERSEDED. Use the series at commit 9ae9739 or earlier.
+#   Measured there: every capability in docs/GOLD-STATUS.md.
+#   The CURRENT series does not apply to 11.15. Verified, not assumed: against a
+#   pristine 11.15 tree, 0007 hunk 1 and 0009 hunks 1 and 3 fail, because their
+#   context now names 11.16 identifiers.
+#
+# 11.16 — CURRENT TARGET, 2026-09-02.
+#   Series applies and builds; 9/9 markers present.
+#   rekordbox 7.2.18 launches: full UI, 187-track library, both decks.
+#   bin/verifyloaded.sh — every patched library the running process mapped is
+#   ours (winealsa.so, winex11.so, from the private tree).
+#   The window REPAINTS: the clock region differs over 65 s, so this is past the
+#   T01 one-frame freeze, which is the failure the whole project exists to fix.
+#   NOT re-measured on 11.16: audio, USB export, DDJ-400. Unproven here.
+# ----------------------------------------------------------------------------
+#
+# WHAT MOVED BETWEEN 11.15 AND 11.16, AND WHAT IT COST TO FIND OUT
+#
+# Three upstream renames, each used by this series only as CONTEXT:
+#   device->serial      ->  device->disk_serial      (0007)
+#   harddisk_driver     ->  disk_driver              (0009)
+#   set_volume_info( .. const char *device, .. )
+#                       ->  const char *unix_device  (0009)
+# No patch BODY changed, which is the good case: none of the fixes had to be
+# rethought. Note that trimming a hunk's trailing context to make it
+# version-agnostic does NOT work — GNU patch cannot place a hunk with no
+# trailing context at all. Measured, after trying it.
+#
+# The expensive part was not the rebase; it was that nothing NOTICED the bump.
+# Arch moved to 11.16 on 2026-08-27. The launcher saw the version change,
+# rebuilt its private tree out of 11.15 binaries, stamped the tree "11.16",
+# reported every check green, and rekordbox stopped opening. Two guards now
+# exist: winedll/.built-for-wine, which makes that stamp honest, and
+# .github/workflows/wine-watch.yml, which files an issue the day Arch ships a
+# version not listed below. See docs/investigation/THEMES/T14.
+#
+# version
+11.16

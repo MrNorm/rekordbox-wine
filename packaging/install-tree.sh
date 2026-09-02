@@ -47,6 +47,11 @@ install -m644 artifacts/*-patched-native-*.dll    "$share/artifacts/"
 # holds historical builds and `install` on a directory fails the build.
 install -dm755 "$share/winedll"
 install -m644 artifacts/winedll/*.so artifacts/winedll/*.sys "$share/winedll/"
+# The Wine version these were COMPILED against. Without it, make-private-wine.sh
+# cannot tell a matching set from a stale one, and on 2026-09-02 it assembled
+# 11.15 libraries into an 11.16 tree, stamped the tree 11.16, and produced an
+# install that passed every check and would not start. See THEMES/T14.
+install -m644 artifacts/winedll/.built-for-wine    "$share/winedll/.built-for-wine"
 
 install -Dm644 packaging/60-pioneer-ddj.rules \
                "$DEST/usr/lib/udev/rules.d/60-pioneer-ddj.rules"

@@ -82,13 +82,17 @@ These need root or a physical replug, so they cannot be done for you:
 
 `rekordbox-wine --check` tells you if either is still outstanding.
 
-### Updates: nothing to do
+### Updates: one thing to do, and only when Wine moves
 
 - **rekordbox updates itself** — the launcher always starts the newest version
   it finds, and re-corrects Wine's regenerated menu entry.
-- **Your distribution updates Wine** — the private tree records which Wine it
-  was built against and is rebuilt automatically. Under the old design a Wine
-  upgrade silently reverted every fix.
+- **Your distribution updates Wine** — this one is *not* free, and the README
+  used to claim it was. The patched components are compiled against Wine's
+  internal interfaces, which change between releases, so a Wine upgrade means a
+  rebuild. What the launcher guarantees is that it will **tell you** rather than
+  start a session that cannot work: it checks the Wine each component was built
+  for and refuses, naming the rebuild command. See *When your distribution
+  upgrades Wine* below.
 
 ### Starting it: use the launcher, not Wine's own menu entry
 
@@ -113,17 +117,80 @@ rekordbox-wine                       # the command
 
 ### Updates
 
-Nothing is pinned to a version. The launcher finds the newest
-`rekordbox.exe` in the prefix, so a rekordbox update just works and Wine's
-regenerated menu entry is corrected again on the next start. The private Wine
-tree records which Wine it was built against and is rebuilt automatically when
-your distribution upgrades Wine — previously an upgrade silently reverted every
-fix.
+The launcher finds the newest `rekordbox.exe` in the prefix, so a **rekordbox**
+update just works, and Wine's regenerated menu entry is corrected again on the
+next start.
 
-The one thing pinned on purpose is the Wine version the *patches* apply to:
-`upstream/patches/supported-wine.txt` lists what has been measured, and the
-build refuses an untested Wine with an explanation rather than failing halfway
-through with a patch error.
+### When your distribution upgrades Wine
+
+This is the one update that costs you something, and it is worth understanding
+because getting it wrong looks exactly like the software randomly breaking.
+
+Four of the fixes are Wine's own unix libraries and two are PE drivers. They are
+compiled against Wine's **internals**, which are not a stable interface — Wine
+changes them freely between releases. A library built for one Wine is not valid
+for the next one. When Arch went 11.15 → 11.16, our `winex11.so` answered
+OpenGL driver interface **38** to an `opengl32` that wanted **39**, so there was
+no OpenGL, so rekordbox could not render, so it did not open.
+
+What this package now guarantees:
+
+- The patched libraries carry the Wine version they were built for
+  (`winedll/.built-for-wine`), and the private tree records both that and the
+  Wine it was assembled against. Before, the tree recorded only the system Wine
+  — a stamp that said "fine" no matter what was inside it.
+- `rekordbox-wine` **refuses to launch** on a mismatch and prints the rebuild
+  command. It used to print the failure and start anyway, which turned a legible
+  error into a mystery.
+- Rebuilding is one command and no root:
+
+  ```sh
+  /usr/share/rekordbox-wine/bin/build-patched-dlls.sh   # 20–30 min
+  /usr/share/rekordbox-wine/bin/make-private-wine.sh
+  ```
+
+  If the new Wine is not in `upstream/patches/supported-wine.txt` it will ask
+  you to confirm with `RBW_ALLOW_UNTESTED_WINE=1`. That is a speed bump, not a
+  wall — trying a new Wine is how the list grows.
+
+- Or hold Wine where it works, which is a legitimate answer for a machine you
+  perform on:
+
+  ```
+  # /etc/pacman.conf
+  IgnorePkg = wine-staging
+  ```
+
+The full account is `docs/investigation/THEMES/T14-wine-upgrade-regression.md`.
+
+### Prebuilt packages, and how breakage gets found before you do
+
+`.github/workflows/` builds this package against **whatever wine-staging Arch
+ships today**, on every push and once a day, and verifies the markers in the
+files that actually ended up inside the package. A Wine release that breaks the
+patch series becomes a red pipeline naming the failing patch, instead of
+becoming somebody's dead set.
+
+- **`build.yml`** — daily and per-push build + marker verification. Attaches the
+  `.pkg.tar.zst` as a workflow artifact.
+- **`wine-watch.yml`** — asks Arch daily what wine-staging is, and keeps one
+  issue open while it is ahead of `supported-wine.txt`.
+- **`release.yml`** — on a `v*` tag, publishes an installable package to GitHub
+  Releases. **Every asset names the Wine it is bound to**, because that is the
+  only thing that makes a binary safe to hand someone.
+- **`aur.yml`** — manual dispatch only, and only if an `AUR_SSH_KEY` secret
+  exists. Publishing here is opt-in for the reason at the top of this file.
+
+To install a prebuilt package instead of compiling:
+
+```sh
+wine --version                       # note the version
+# download the asset whose name matches it, from the Releases page
+sudo pacman -U rekordbox-wine-git-*-wine<version>.pkg.tar.zst
+```
+
+If no published asset matches your Wine, build from source — that path compiles
+against the Wine you actually have and is always correct.
 
 ### It does not touch your system Wine
 

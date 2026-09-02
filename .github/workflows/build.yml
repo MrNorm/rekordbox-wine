@@ -1,0 +1,176 @@
+name: build
+
+# THE POINT OF THIS PIPELINE.
+#
+# This package compiles Wine components from a patch series against Wine's
+# INTERNALS, and Wine's internals are not stable between releases. On
+# 2026-08-27 Arch moved wine-staging 11.15 -> 11.16; on 2026-09-02 the user
+# found out because rekordbox stopped opening. Three upstream renames and one
+# OpenGL driver-interface bump, and nothing had told anybody.
+#
+# So: build against whatever wine-staging Arch ships TODAY, on every push and
+# once a day. A Wine bump that breaks the series becomes a red pipeline with the
+# failing patch named in the log, days before it becomes somebody's dead DJ set.
+#
+# See docs/investigation/THEMES/T14-wine-upgrade-regression.md
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    # Daily. Arch is a rolling release; a weekly cadence can put a Wine bump six
+    # days ahead of the pipeline that is supposed to catch it.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    # Arch in a container, because the package is an Arch package and the whole
+    # value of this job is building against the Wine that Arch users actually
+    # have. base-devel brings makepkg and the toolchain.
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    timeout-minutes: 120
+
+    steps:
+      - name: Enable multilib and sync
+        # wine-staging is in [multilib]. Without this the dependency does not
+        # resolve and the failure reads as "package not found", which sends you
+        # looking in the wrong place.
+        run: |
+          set -euo pipefail
+          printf '[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git wine-staging
+
+      - uses: actions/checkout@v4
+        with:
+          # makepkg's pkgver() counts commits, so a shallow clone produces a
+          # version that goes BACKWARDS between runs.
+          fetch-depth: 0
+
+      - name: Record the Wine this run is building against
+        id: wine
+        run: |
+          set -euo pipefail
+          ver="$(wine --version | sed 's/^wine-//;s/ .*//')"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Arch wine-staging today: $ver"
+          if grep -qE "^[[:space:]]*${ver//./\\.}([[:space:]]|$)" upstream/patches/supported-wine.txt; then
+            echo "supported=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=no" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Untested Wine::wine $ver is not in upstream/patches/supported-wine.txt. Building anyway so the series is tested against it; if this job passes, add $ver to that file with what you measured."
+          fi
+
+      - name: makepkg (unprivileged — makepkg refuses to run as root)
+        env:
+          # Not in supported-wine.txt yet is exactly the case this pipeline
+          # exists to discover, so build it rather than skip it. A patch that no
+          # longer applies fails loudly a few steps below.
+          RBW_ALLOW_UNTESTED_WINE: '1'
+        run: |
+          set -euo pipefail
+          useradd -m builder
+          chown -R builder:builder .
+          # makepkg's own dependency install needs root without a password.
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          sudo -u builder --preserve-env=RBW_ALLOW_UNTESTED_WINE \
+            bash -c 'cd packaging && makepkg -s --noconfirm --noprogressbar'
+
+      - name: Verify the built package really contains the patches
+        # makepkg already ran check(), which greps the markers in the BUILD
+        # tree. This is the different and stronger claim: the markers are in the
+        # files that ended up INSIDE the package. A build that verifies its
+        # workspace and ships something else is a failure mode this project has
+        # already paid for.
+        run: |
+          set -euo pipefail
+          pkg="$(ls packaging/*.pkg.tar.zst | head -1)"
+          echo "inspecting $pkg"
+          mkdir -p /tmp/inspect && tar -C /tmp/inspect -xf "$pkg"
+          ver='${{ steps.wine.outputs.version }}'
+          fail=0
+          check() {   # <path under the package root> <marker>
+            local f="/tmp/inspect/$1" m="$2"
+            if [[ ! -f "$f" ]]; then echo "::error::missing from package: $1"; fail=1; return; fi
+            if [[ "$(strings -a "$f" | grep -c -- "$m" || true)" -eq 0 ]]; then
+              echo "::error::$1 has no '$m' marker — stock build?"; fail=1
+            else
+              echo "  ok  $1  ($m)"
+            fi
+          }
+          check "usr/share/rekordbox-wine/artifacts/dxgi-patched-native-$ver.dll"     RBW-PATCH
+          check "usr/share/rekordbox-wine/artifacts/mmdevapi-patched-native-$ver.dll" RBW-MMDEV
+          check "usr/share/rekordbox-wine/artifacts/setupapi-patched-native-$ver.dll" PhysicalDeviceObjectName
+          check "usr/share/rekordbox-wine/winedll/winealsa.so"  RBW-EVENT3
+          check "usr/share/rekordbox-wine/winedll/winealsa.so"  alsa_rawmidi_open
+          check "usr/share/rekordbox-wine/winedll/winex11.so"   RBW-POPUP
+          check "usr/share/rekordbox-wine/winedll/mountmgr.so"  RBW-REMOVABLE
+          check "usr/share/rekordbox-wine/winedll/mountmgr.sys" RBW-BUSTYPE
+          check "usr/share/rekordbox-wine/winedll/mountmgr.sys" RBW-VOLNODE
+          check "usr/share/rekordbox-wine/winedll/wineusb.sys"  RBW-USBHCD
+          check "usr/share/rekordbox-wine/winedll/wineusb.so"   RBW-USBHCD
+
+          # The ABI stamp added after T14. A package without it makes
+          # make-private-wine.sh treat its own libraries as unknown-version and
+          # refuse to build a tree, so this is not cosmetic.
+          stamp=/tmp/inspect/usr/share/rekordbox-wine/winedll/.built-for-wine
+          if [[ ! -f "$stamp" ]]; then
+            echo "::error::the package carries no winedll/.built-for-wine stamp"; fail=1
+          elif [[ "$(cat "$stamp")" != "$ver" ]]; then
+            echo "::error::.built-for-wine says $(cat "$stamp"), built against $ver"; fail=1
+          else
+            echo "  ok  winedll/.built-for-wine = $ver"
+          fi
+          exit $fail
+
+      - name: Install the package and run the launcher's own checker
+        # The launcher is the thing users actually run, and its --check path has
+        # itself shipped broken before (a repair that silently did nothing, a
+        # check that could never fail). Run it against a real installation.
+        # Most checks need a desktop session and hardware and will report FAIL
+        # here; what is being tested is that it RUNS, finds its helpers, and
+        # correctly reports the artifact/ABI state — which is precisely what was
+        # wrong on 2026-09-02.
+        run: |
+          set -euo pipefail
+          pacman -U --noconfirm packaging/*.pkg.tar.zst
+          ver='${{ steps.wine.outputs.version }}'
+          out=$(runuser -u builder -- env HOME=/home/builder rekordbox-wine --check 2>&1 || true)
+          echo "$out"
+          if echo "$out" | grep -q "no artifact for wine $ver"; then
+            echo "::error::the installed package has no artifact for the Wine it was built against"
+            exit 1
+          fi
+          if echo "$out" | grep -q "libraries built for wine"; then
+            echo "::error::the installed package's libraries do not match its Wine"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rekordbox-wine-arch-wine${{ steps.wine.outputs.version }}
+          path: packaging/*.pkg.tar.zst
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Say plainly whether this Wine is recorded as supported
+        if: always()
+        run: |
+          if [[ '${{ steps.wine.outputs.supported }}' == 'no' ]]; then
+            echo "### Wine ${{ steps.wine.outputs.version }} is NOT in supported-wine.txt" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "The build above tells you whether the series still APPLIES and COMPILES." >> "$GITHUB_STEP_SUMMARY"
+            echo "It does not tell you whether rekordbox still works — that needs the" >> "$GITHUB_STEP_SUMMARY"
+            echo "hardware. Add the version to \`upstream/patches/supported-wine.txt\` only" >> "$GITHUB_STEP_SUMMARY"
+            echo "once something has been measured on it." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Wine ${{ steps.wine.outputs.version }} is recorded as supported." >> "$GITHUB_STEP_SUMMARY"
+          fi

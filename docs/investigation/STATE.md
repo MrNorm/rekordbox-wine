@@ -1,6 +1,65 @@
 # STATE — read this first
 
-## Where things are — 2026-08-20 (early hours)
+## Where things are — 2026-09-02
+
+**Wine moved and it broke everything, silently. That is now fixed, rebased and
+under CI.** rekordbox runs again on wine-staging 11.16; see
+`docs/investigation/THEMES/T14-wine-upgrade-regression.md` for the whole account.
+
+Arch upgraded wine-staging 11.15 → 11.16 on 2026-08-27. The launcher noticed the
+version change, rebuilt its private Wine tree out of the **11.15** binaries it
+had, stamped the tree "11.16", and reported every check green. Measured result:
+`opengl32 wants 39 but driver has 38` — no OpenGL, so no rendering, so
+"rekordbox no longer opens". The three PE artifacts correctly reported FAIL, and
+the launcher launched anyway, because `bad()` was advisory outside `--check`.
+
+Two defects, both the familiar shape — an instrument that reports success while
+the thing it measures is wrong:
+
+- **the version stamp was a lie.** `.wine-version` recorded the *system* Wine,
+  not the Wine the patched binaries inside were compiled for, and
+  `artifacts/winedll/` carried no version at all. Now
+  `winedll/.built-for-wine` exists, `make-private-wine.sh` refuses a mixed-ABI
+  tree, and the tree records both versions.
+- **`FAIL` did not stop a launch.** New `blocker()`; the launch path stops and
+  prints the rebuild commands.
+
+**Series rebased onto 11.16.** Three upstream renames, all context-only:
+`device->serial`→`disk_serial`, `harddisk_driver`→`disk_driver`,
+`set_volume_info`'s `const char *device`→`unix_device`. No patch body changed.
+The series now targets **one** Wine at a time and says so; it does **not** apply
+to 11.15 (verified against a pristine tree). 11.15 is commit `9ae9739`.
+
+**Verified after the fix:** 8/8 components built, 9/9 markers, rekordbox 7.2.18
+up with the full UI and a 187-track library, `verifyloaded.sh` green, and the
+window **repaints** (clock region differs over 65 s — past T01).
+**Not re-measured on 11.16:** audio, USB export, DDJ-400. Do not claim those.
+
+**Structural fix, so a Wine bump is never discovered by a user again:**
+`.github/workflows/` — `build.yml` (daily + per-push Arch package build against
+whatever wine-staging Arch ships, markers verified inside the built package),
+`wine-watch.yml` (daily version check against `supported-wine.txt`, keeps one
+issue open), `release.yml` (installable package per `v*` tag, Wine version in
+every asset name), `aur.yml` (manual dispatch, gated on a secret).
+
+### Next action
+
+1. **Push the CI to GitHub and watch the first `build` run.** The workflows have
+   never executed. `origin/master` is a curated 6-commit history whose tree is
+   identical to local `389ee04`; publish by fast-forwarding it, never by pushing
+   the 262-commit local history.
+2. **Re-measure audio, USB export and the DDJ-400 on 11.16.** Until then
+   `supported-wine.txt` claims only "applies, builds, launches, repaints", which
+   is all that has been shown.
+3. Then resume the pre-existing next actions below.
+
+### Blocked on
+
+Nothing for (1). (2) needs the controller and a FAT32 stick.
+
+---
+
+## Where things were — 2026-08-20 (early hours)
 
 **The AUR cleanbuild is verified: a build from `upstream/patches/0001..0009` and a
 pristine Wine tarball loses no fix.** That was the last question standing
@@ -1185,6 +1244,10 @@ error anywhere in a 1.2M-line log.
   reproducing automatically: run `20260813T062324-rb7-stale-surface-confirm`.
 
 ## Active themes
+
+- `docs/investigation/THEMES/T14-wine-upgrade-regression.md` — **RESOLVED 2026-09-02.** A Wine
+  upgrade produced a mixed-ABI install that every instrument called healthy.
+  Reopen if a Wine bump ever again reaches a user before it reaches CI.
 
 - `docs/investigation/THEMES/T00-instrument.md` — RESOLVED. Re-verify after any Wine/KDE/IM/tesseract upgrade.
 - `docs/investigation/THEMES/T01-first-window.md` — **RESOLVED 2026-08-13**, root cause proven and

@@ -56,6 +56,6 @@ knowably wrong from being knowably wrong.
 +            }
 +            TRACE( "RBW-BUSTYPE device type %u -> removable %u bus %u\n",
 +                   device->type, descriptor->RemovableMedia, descriptor->BusType );
-             if (!device->serial) descriptor->SerialNumberOffset = 0;
+             if (!device->disk_serial) descriptor->SerialNumberOffset = 0;
              else
              {

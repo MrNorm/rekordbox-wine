@@ -1,0 +1,116 @@
+name: wine-watch
+
+# A cheap early-warning signal, separate from the build.
+#
+# The build job tells you the series still COMPILES against today's Wine. This
+# one tells you, in seconds and without a container, that Arch has moved Wine
+# past the versions this project has actually MEASURED. Those are different
+# claims, and the second is the one that mattered on 2026-09-02: the series
+# would have compiled for 11.16 given three context fixes, but nobody knew 11.16
+# had landed until rekordbox stopped opening. See THEMES/T14.
+#
+# It keeps ONE issue and edits it, rather than filing a new issue a day.
+
+on:
+  schedule:
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ask Arch what wine-staging is today
+        id: arch
+        run: |
+          set -euo pipefail
+          curl -fsSL https://archlinux.org/packages/multilib/x86_64/wine-staging/json/ > /tmp/arch.json
+          # pkgver is "11.16". pkgrel is packaging-only and does not move Wine,
+          # so comparing it would cry wolf on every rebuild.
+          ver="$(python3 -c 'import json;print(json.load(open("/tmp/arch.json"))["pkgver"])')"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "Arch multilib wine-staging: $ver"
+
+      - name: Compare against what has been measured
+        id: cmp
+        run: |
+          set -euo pipefail
+          ver='${{ steps.arch.outputs.version }}'
+          known="$(grep -vE '^[[:space:]]*(#|$)' upstream/patches/supported-wine.txt | awk '{print $1}' | paste -sd', ')"
+          echo "known=$known" >> "$GITHUB_OUTPUT"
+          if grep -qE "^[[:space:]]*${ver//./\\.}([[:space:]]|$)" upstream/patches/supported-wine.txt; then
+            echo "drifted=no" >> "$GITHUB_OUTPUT"
+            echo "wine $ver is recorded as measured."
+          else
+            echo "drifted=yes" >> "$GITHUB_OUTPUT"
+            echo "DRIFT: wine $ver is not in supported-wine.txt (known: $known)"
+          fi
+
+      - name: File or update the one standing issue
+        if: steps.cmp.outputs.drifted == 'yes'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.arch.outputs.version }}
+          KNOWN: ${{ steps.cmp.outputs.known }}
+        run: |
+          set -euo pipefail
+          title="Wine drift: Arch ships wine-staging $VER, which this series has not been measured on"
+          {
+            echo "Arch's multilib \`wine-staging\` is now **$VER**."
+            echo "\`upstream/patches/supported-wine.txt\` records: **$KNOWN**."
+            echo
+            echo "Wine's internal interfaces are not stable between releases, so a version"
+            echo "this project has not built against is a version rekordbox may fail to open"
+            echo "on. That is not hypothetical — see"
+            echo "\`docs/investigation/THEMES/T14-wine-upgrade-regression.md\`, where an"
+            echo "11.15 → 11.16 bump left \`winex11.so\` answering OpenGL driver interface 38"
+            echo "to an \`opengl32\` that wanted 39, and every check in the launcher still"
+            echo "reported healthy."
+            echo
+            echo "## What to do"
+            echo
+            echo "1. Look at the latest \`build\` run. It builds against whatever Arch ships"
+            echo "   today, so it already knows whether the series applies and compiles on $VER."
+            echo "2. If a patch failed to apply, rebase that patch's context. Upstream renames"
+            echo "   are the usual cause and are context-only about half the time."
+            echo "3. If it passed, the series **compiles**. That is not the same as **works**."
+            echo "   Run it on the hardware before adding $VER to \`supported-wine.txt\`, and"
+            echo "   record what you measured beside the version."
+            echo
+            echo "Until then the launcher correctly refuses to start on $VER rather than"
+            echo "dropping someone into a broken session mid-set. Holding Wine back is a"
+            echo "legitimate answer:"
+            echo
+            echo '```'
+            echo '# /etc/pacman.conf'
+            echo 'IgnorePkg = wine-staging'
+            echo '```'
+          } > /tmp/body.md
+
+          existing="$(gh issue list --state open --limit 100 --json number,title \
+                      --jq '[.[] | select(.title | startswith("Wine drift:")) | .number] | first // empty')"
+          if [[ -n "$existing" ]]; then
+            gh issue edit "$existing" --title "$title" --body-file /tmp/body.md
+            echo "updated issue #$existing"
+          else
+            gh issue create --title "$title" --body-file /tmp/body.md
+          fi
+
+      - name: Close the standing issue once the version is recorded as measured
+        if: steps.cmp.outputs.drifted == 'no'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.arch.outputs.version }}
+        run: |
+          set -euo pipefail
+          n="$(gh issue list --state open --limit 100 --json number,title \
+               --jq '[.[] | select(.title | startswith("Wine drift:")) | .number] | first // empty')"
+          if [[ -n "$n" ]]; then
+            gh issue close "$n" --comment "wine-staging $VER is now recorded in supported-wine.txt."
+          fi

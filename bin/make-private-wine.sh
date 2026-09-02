@@ -61,6 +61,50 @@ echo "system wine : $WINE_VER  ($SYS_LIB_ROOT)"
 echo "layout      : \$prefix/$REL_LIB  — mirrored so the loader resolves it"
 echo "private tree: $TREE"
 
+# THE ABI GATE. These are unix .so files and PE drivers linked against Wine
+# INTERNALS; they are valid for exactly one Wine version. Nothing here used to
+# check that, because the tree's .wine-version recorded the SYSTEM wine rather
+# than the wine these files were compiled for -- so a tree built from 11.15
+# binaries against an 11.16 system stamped itself "11.16" and every downstream
+# check agreed it was fine. It was not: `opengl32 wants 39 but driver has 38`,
+# no OpenGL, and rekordbox stopped opening. That cost a working install on
+# 2026-09-02 and a session to find. See docs/investigation/THEMES/T14.
+#
+# Refuse the mix. A missing stamp means binaries built before this check
+# existed; treat it as unknown and refuse just the same, because "unknown" is
+# how the original bug presented.
+SRC_VER="$(cat "$SRCDIR/.built-for-wine" 2>/dev/null || echo unknown)"
+if [[ "$SRC_VER" != "$WINE_VER" ]]; then
+  if [[ "${RBW_ALLOW_UNTESTED_WINE:-0}" == 1 ]]; then
+    echo "WARNING: patched libraries were built for wine $SRC_VER, system wine is $WINE_VER" >&2
+    echo "         RBW_ALLOW_UNTESTED_WINE=1 -- building the tree anyway. Expect ABI failures." >&2
+  else
+    cat >&2 <<EOM
+refusing to build a mixed-ABI Wine tree.
+
+  patched libraries in $SRCDIR
+  were built for wine : $SRC_VER
+  system wine is      : $WINE_VER
+
+Wine's internal interfaces are not stable across releases, so these files
+cannot be used with this Wine. Copying them anyway produces an install that
+passes every marker check and does not run -- exactly what happened on
+2026-09-02 (THEMES/T14).
+
+Rebuild the patched libraries against the Wine you are running:
+
+  bin/build-patched-dlls.sh
+
+If wine $WINE_VER is not yet in upstream/patches/supported-wine.txt, that
+build will also ask you to confirm with RBW_ALLOW_UNTESTED_WINE=1. Doing so is
+how the supported list grows -- record what you measured when you add it.
+
+Or hold Wine at $SRC_VER (Arch: IgnorePkg = wine-staging in /etc/pacman.conf).
+EOM
+    exit 1
+  fi
+fi
+
 for f in "${PATCHED_UNIX[@]}" "${PATCHED_PE[@]}"; do
   [[ -f "$SRCDIR/$f" ]] || { echo "missing patched build: $SRCDIR/$f — run bin/build-patched-dlls.sh" >&2; exit 1; }
   if [[ "$(strings -a "$SRCDIR/$f" | grep -c -- "${MARKER[$f]}" || true)" -eq 0 ]]; then
@@ -125,7 +169,12 @@ u="$(basename "$WINE_UNIX_DIR")"; p="$(basename "$WINE_PE_DIR")"
 for f in "${PATCHED_UNIX[@]}"; do rm -f "$TREE/$REL_LIB/$u/$f"; install -m644 "$SRCDIR/$f" "$TREE/$REL_LIB/$u/$f"; done
 for f in "${PATCHED_PE[@]}";   do rm -f "$TREE/$REL_LIB/$p/$f"; install -m644 "$SRCDIR/$f" "$TREE/$REL_LIB/$p/$f"; done
 
+# Record BOTH versions. .wine-version is what the tree was assembled against;
+# .built-for-wine is what the patched binaries inside it were compiled for. They
+# are equal unless someone forced the override above, and a consumer that only
+# ever reads the first one cannot tell a healthy tree from a mixed-ABI one.
 echo "$WINE_VER" > "$TREE/.wine-version"
+echo "$SRC_VER"  > "$TREE/.built-for-wine"
 # Consumers must not guess the layout -- record it beside the tree.
 echo "$REL_LIB" > "$TREE/.wine-layout"
 echo

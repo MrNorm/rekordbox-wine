@@ -232,7 +232,21 @@ if [[ ${#built[@]} -eq 0 ]]; then
   echo; echo "NOTHING WAS BUILT — no component matched ${WANT[*]:-(all)}"; exit 1
 fi
 
+# STAMP THE UNIX LIBRARIES WITH THE WINE THEY WERE BUILT AGAINST.
+#
+# The PE artifacts carry their version in the filename; artifacts/winedll/ never
+# carried one, and that asymmetry cost a working install on 2026-09-02. When
+# wine-staging went 11.15 -> 11.16, make-private-wine.sh copied these 11.15
+# binaries into an 11.16 tree and stamped the tree "11.16" -- the version of the
+# SYSTEM wine, not of the files it had just installed. The result was
+# `opengl32 wants 39 but driver has 38`, no GL, and an application that does not
+# open, while every check in the launcher reported healthy. See T14.
+#
+# These are unix .so files linked against Wine internals. They are valid for
+# exactly one Wine version, so say which one, in the directory, next to them.
+echo "$WINE_VER" > "$ROOT/artifacts/winedll/.built-for-wine"
+
 echo
 echo "built and verified: ${built[*]}"
 echo "  prefix DLLs      -> artifacts/*-patched-native-$WINE_VER.dll"
-echo "  system libraries -> artifacts/winedll/   (install with research/retired/install-system-wine-patches.sh)"
+echo "  system libraries -> artifacts/winedll/   (built for wine $WINE_VER)"

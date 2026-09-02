@@ -82,11 +82,27 @@ case "${1:-}" in
 esac
 
 FAIL=0
+BLOCKERS=()
 ok()   { printf '  \033[32mok\033[0m    %s\n' "$*"; }
 warn() { printf '  \033[33mwarn\033[0m  %s\n' "$*"; }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; FAIL=1; }
 note() { printf '        %s\n' "$*"; }
 hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+# blocker() is bad() for a condition that makes LAUNCHING POINTLESS.
+#
+# This distinction is not cosmetic. Until 2026-09-02 every failure was advisory:
+# bad() set FAIL=1, only --check and --setup ever returned it, and the launch
+# path exec'd rekordbox regardless. So when wine-staging went 11.15 -> 11.16 and
+# every patched binary on the machine became unloadable, the launcher printed
+# three correct red FAIL lines naming the exact problem -- and then started an
+# application that could not render, with no GL and unloadable native
+# overrides. What the user saw was "it stopped opening", with the diagnosis
+# already on screen and scrolled past. See docs/investigation/THEMES/T14.
+#
+# A checker that knows the run is doomed and starts it anyway is worse than no
+# checker, because it converts a legible error into a mystery.
+blocker() { bad "$*"; BLOCKERS+=("$*"); }
 
 # Registry reads parse the prefix's user.reg DIRECTLY rather than shelling out
 # to `wine reg query`.
@@ -181,7 +197,12 @@ for dll in dxgi mmdevapi setupapi; do
   dst="$WINEPREFIX/drive_c/windows/system32/$dll.dll"
 
   if [[ ! -f "$art" ]]; then
-    bad "$dll: no artifact for wine $WINE_VER at $art"
+    # Almost always a Wine upgrade: the artifacts are version-stamped, so a new
+    # Wine has no artifact until one is built for it. The prefix still forces
+    # this DLL to `native`, and the native copy sitting in system32 is the
+    # PREVIOUS Wine's build -- which the new Wine cannot load at all
+    # (status=c0000135). Launching now is guaranteed to fail.
+    blocker "$dll: no artifact for wine $WINE_VER at $art"
     note "build it with: $DATADIR/bin/build-patched-dlls.sh $dll"
     continue
   fi
@@ -278,6 +299,12 @@ hdr "Private Wine tree"
 # tied to one Wine version: after a wine upgrade the symlinks still resolve but
 # the patched files were compiled against the old headers, so rebuild.
 _pw_ver="$(cat "$PRIVATE_WINE/.wine-version" 2>/dev/null || echo none)"
+# What the patched binaries INSIDE the tree were compiled for -- which is not
+# the same question as what the tree was assembled against, and is the one that
+# decides whether Wine can load them. Trees built before 2026-09-02 carry no
+# such stamp; "unknown" is treated as a mismatch below, because unknown is
+# precisely the state the original failure was in.
+_pw_abi="$(cat "$PRIVATE_WINE/.built-for-wine" 2>/dev/null || echo unknown)"
 if [[ ! -x "$WINE" ]]; then
   if [[ $MODE == check ]]; then
     bad "no private Wine tree at $PRIVATE_WINE"
@@ -288,20 +315,38 @@ if [[ ! -x "$WINE" ]]; then
        || RBW_WINEDLL_DIR="$DATADIR/artifacts/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1; then
       ok "private Wine tree built"
     else
-      bad "could not build the private Wine tree"
+      blocker "could not build the private Wine tree"
       note "Run it directly to see why:  $DATADIR/bin/make-private-wine.sh"
     fi
   fi
 elif [[ "$_pw_ver" != "$WINE_VER" ]]; then
   if [[ $MODE == check ]]; then
-    bad "private Wine tree was built against wine $_pw_ver, system wine is $WINE_VER"
+    blocker "private Wine tree was built against wine $_pw_ver, system wine is $WINE_VER"
     note "Rebuild with:  $DATADIR/bin/make-private-wine.sh"
   else
     warn "wine changed $_pw_ver -> $WINE_VER; rebuilding the private tree"
-    RBW_WINEDLL_DIR="$DATADIR/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1 \
-      || RBW_WINEDLL_DIR="$DATADIR/artifacts/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1 \
-      || bad "rebuild failed — run $DATADIR/bin/make-private-wine.sh"
+    # The rebuild now REFUSES when the patched binaries were compiled for a
+    # different Wine, instead of quietly assembling a mixed-ABI tree and
+    # stamping it with the system version. That refusal is the whole point, so
+    # it must reach the user: keep the script's own stderr.
+    if RBW_WINEDLL_DIR="$DATADIR/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null \
+       || RBW_WINEDLL_DIR="$DATADIR/artifacts/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null; then
+      ok "private Wine tree rebuilt against wine $WINE_VER"
+    else
+      blocker "the private Wine tree cannot be rebuilt for wine $WINE_VER"
+      note "The patched libraries were built for a different Wine — see above."
+    fi
   fi
+# The tree can be assembled against the running Wine and still be wrong: what
+# matters is the Wine its patched binaries were COMPILED for. Checking only the
+# first of those is what let a 11.15 winex11.so into an 11.16 tree, answer
+# OpenGL interface 38 to an opengl32 that wanted 39, and take the whole
+# application down while reporting "ok". See THEMES/T14.
+elif [[ "$_pw_abi" != "$WINE_VER" ]]; then
+  blocker "private Wine tree holds libraries built for wine $_pw_abi, but wine is $WINE_VER"
+  note "Wine's internal interfaces are version-locked; these cannot load."
+  note "Rebuild them with:  $DATADIR/bin/build-patched-dlls.sh"
+  note "then:               $DATADIR/bin/make-private-wine.sh"
 else
   ok "private Wine tree matches system wine $WINE_VER — system Wine untouched"
 fi
@@ -704,6 +749,35 @@ if [[ $MODE == install ]]; then
 fi
 
 # ---------------------------------------------------------------------- launch
+#
+# STOP HERE IF THE RUN IS ALREADY LOST.
+#
+# Everything above self-repairs what it can. What reaches this point is what
+# could NOT be repaired -- and for the conditions marked blocker() that means
+# rekordbox will start, fail to render or fail to load its overrides, and look
+# to the user like software that broke for no reason. On 2026-09-02 that is
+# exactly what happened, and the diagnosis was already printed above the
+# failure. Refusing here converts a mystery back into a message. See THEMES/T14.
+if [[ ${#BLOCKERS[@]} -gt 0 ]]; then
+  hdr "Not launching"
+  note "rekordbox would start and fail. These must be fixed first:"
+  for b in "${BLOCKERS[@]}"; do printf '  \033[31m·\033[0m %s\n' "$b"; done
+  echo
+  note "Almost always this means Wine was upgraded and the patched components"
+  note "have not been rebuilt for it. Wine's internals are not stable across"
+  note "releases, so the components are valid for one version only."
+  echo
+  note "Rebuild them (about 20-30 minutes, no root):"
+  note "  $DATADIR/bin/build-patched-dlls.sh"
+  note "  $DATADIR/bin/make-private-wine.sh"
+  echo
+  note "Or install a package built for this Wine, or hold Wine at the version"
+  note "that worked:  IgnorePkg = wine-staging   in /etc/pacman.conf"
+  echo
+  note "Full report:  $SELF --check"
+  exit 1
+fi
+
 EXE="$(find "$WINEPREFIX/drive_c/Program Files/rekordbox" -maxdepth 2 -name 'rekordbox.exe' 2>/dev/null | sort -V | tail -1)"
 if [[ -z "$EXE" ]]; then
   bad "rekordbox.exe not found under $WINEPREFIX/drive_c/Program Files/rekordbox"

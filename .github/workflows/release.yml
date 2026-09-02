@@ -1,0 +1,126 @@
+name: release
+
+# Publishes an INSTALLABLE Arch package, so this laptop can go from "git pull"
+# to "pacman -U" without a 25-minute Wine compile.
+#
+# READ THIS BEFORE TRUSTING A BINARY FROM HERE. The package contains Wine
+# libraries linked against Wine's internals. They are valid for EXACTLY the
+# wine-staging version they were built against and no other — that is the whole
+# lesson of THEMES/T14, where 11.15 libraries in an 11.16 tree produced an
+# application that would not open. So:
+#
+#   * every asset carries the Wine version in its filename;
+#   * the release body states it in the first line;
+#   * the launcher refuses to run a mismatch rather than limping.
+#
+# If your wine-staging is newer than any published asset, build from source:
+#   cd packaging && makepkg -si
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish (must already exist)'
+        required: true
+
+permissions:
+  contents: write   # creating the release and uploading assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged
+    timeout-minutes: 120
+
+    steps:
+      - name: Enable multilib and sync
+        run: |
+          set -euo pipefail
+          printf '[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+          pacman -Syu --noconfirm --needed git wine-staging
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Identify the build
+        id: id
+        run: |
+          set -euo pipefail
+          echo "wine=$(wine --version | sed 's/^wine-//;s/ .*//')" >> "$GITHUB_OUTPUT"
+          echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the package
+        env:
+          RBW_ALLOW_UNTESTED_WINE: '1'
+        run: |
+          set -euo pipefail
+          useradd -m builder
+          chown -R builder:builder .
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          sudo -u builder --preserve-env=RBW_ALLOW_UNTESTED_WINE \
+            bash -c 'cd packaging && makepkg -s --noconfirm --noprogressbar'
+
+      - name: Name the assets after the Wine they are bound to, and checksum them
+        id: assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          wine_ver='${{ steps.id.outputs.wine }}'
+          for f in packaging/*.pkg.tar.zst; do
+            base="$(basename "$f" .pkg.tar.zst)"
+            # e.g. rekordbox-wine-git-0.2.0.r12.gabc1234-1-x86_64-wine11.16.pkg.tar.zst
+            cp "$f" "dist/${base}-wine${wine_ver}.pkg.tar.zst"
+          done
+          cd dist && sha256sum *.pkg.tar.zst > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.id.outputs.tag }}
+          files: |
+            dist/*.pkg.tar.zst
+            dist/SHA256SUMS
+          body: |
+            **Built against wine-staging ${{ steps.id.outputs.wine }}. It will not work with any other version.**
+
+            The package ships Wine libraries compiled against Wine's internal
+            interfaces, which change without notice between releases. Installing
+            it under a different wine-staging gives you an application that
+            starts and does not render — so `rekordbox-wine` checks the version
+            on every launch and refuses rather than pretending.
+
+            ### Install
+
+            ```sh
+            wine --version                       # must say wine-${{ steps.id.outputs.wine }}
+            sudo pacman -U rekordbox-wine-*.pkg.tar.zst
+            rekordbox-wine --install /path/to/Install_rekordbox_x64_7_2_*.exe
+            rekordbox-wine
+            ```
+
+            ### If your Wine is newer
+
+            Build from source — it compiles the patch series against the Wine
+            you actually have, which takes 20–30 minutes and needs no root:
+
+            ```sh
+            git clone https://github.com/MrNorm/rekordbox-wine.git
+            cd rekordbox-wine/packaging && makepkg -si
+            ```
+
+            ### What this does and does not contain
+
+            It does **not** contain rekordbox. rekordbox is proprietary; download
+            it from rekordbox.com and sign in with your own AlphaTheta account.
+            This package is the patched Wine components, a udev rule, and a
+            launcher that verifies every one of them before starting.
+
+            See `docs/GOLD-STATUS.md` for what is measured to work and what is
+            not, stated honestly.
