@@ -80,11 +80,36 @@ the same payload, but neither has been built on its own distribution.
 ## First run
 
 ```sh
-rekordbox-wine --install ~/Downloads/rekordbox_7.2.18.exe
+rekordbox-wine --install     # downloads the latest rekordbox, then installs it
 rekordbox-wine
 ```
 
 Neither needs root. The installer shows one language dialog — press Return.
+
+| command | behaviour |
+|---|---|
+| `rekordbox-wine --install` | asks which version, then installs |
+| `rekordbox-wine --install --latest` | newest, no questions |
+| `rekordbox-wine --install <file.exe>` | uses an installer you already have |
+| `rekordbox-wine --fetch [dir]` | downloads only |
+
+With no terminal — a script, CI, a hook — `--install` never prompts and takes
+the newest.
+
+The version prompt offers the current release plus any installer already on the
+machine (download cache, working directory, `artifacts/`):
+
+```
+Which version?
+  1) 7.2.18  (current release — download)
+  2) 7.2.17  (already here — artifacts/Install_rekordbox_x64_7_2_17.exe)
+```
+
+**Only the current release is downloadable.** AlphaTheta publishes one installer
+link; there is no archive page, and older CDN paths return 403. Anything else in
+the list is a file already on your disk.
+
+`bin/fetch-rekordbox.sh --list` shows what is available without downloading.
 
 The launcher runs on every start and repairs drift: builds its private Wine tree,
 installs the patched DLLs into the prefix, applies the audio settings PC MASTER

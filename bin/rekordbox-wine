@@ -64,22 +64,53 @@ WINE="$PRIVATE_WINE/bin/wine"
 PW_LIB="$(cat "$PRIVATE_WINE/.wine-layout" 2>/dev/null || echo lib/wine)"
 # Installed by the package; overridable for running out of a source checkout.
 
+# Locates the installer downloader, wherever this is running from.
+rbw_fetcher() {
+  local c
+  for c in "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/fetch-rekordbox.sh" \
+           "$DATADIR/bin/fetch-rekordbox.sh" \
+           /usr/share/rekordbox-wine/bin/fetch-rekordbox.sh; do
+    [[ -x "$c" ]] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
 MODE=launch
 INSTALLER=
 case "${1:-}" in
   --check) MODE=check ;;
+  --fetch) MODE=fetch ;;
   --setup) MODE=setup ;;
   --install)
+    # Three forms:
+    #   --install <file>     use that installer
+    #   --install            choose a version, then install
+    #   --install --latest   newest, no questions (also what happens with no tty)
     MODE=install
     INSTALLER="${2:-}"
-    [[ -n "$INSTALLER" ]] || { echo "usage: $SELF --install <rekordbox-installer.exe>" >&2; exit 2; }
-    [[ -f "$INSTALLER" ]] || { echo "$SELF: no such file: $INSTALLER" >&2; exit 2; }
-    INSTALLER="$(cd "$(dirname "$INSTALLER")" && pwd)/$(basename "$INSTALLER")"
-    shift 2 || shift
+    FETCH_ARGS=()
+    case "$INSTALLER" in
+      "")
+        # `shift 2` on a one-element list fails, and under set -u that is fatal.
+        MODE=install-fetch; shift ;;
+      --latest|-y|--yes|--non-interactive)
+        MODE=install-fetch; FETCH_ARGS+=(--latest); shift 2 ;;
+      *)
+        [[ -f "$INSTALLER" ]] || { echo "$SELF: no such file: $INSTALLER" >&2; exit 2; }
+        INSTALLER="$(cd "$(dirname "$INSTALLER")" && pwd)/$(basename "$INSTALLER")"
+        shift 2 || shift ;;
+    esac
     ;;
   "")      ;;
-  *) echo "usage: $SELF [--check|--setup|--install <installer.exe>]" >&2; exit 2 ;;
+  *) echo "usage: $SELF [--check|--setup|--fetch|--install [installer.exe|--latest]]" >&2; exit 2 ;;
 esac
+
+# --fetch downloads and stops. It touches no prefix and needs no Wine, so it
+# runs before every check below rather than after them.
+if [[ "${1:-}" == "--fetch" ]]; then
+  _f="$(rbw_fetcher)" || { echo "$SELF: fetch-rekordbox.sh not found" >&2; exit 1; }
+  exec "$_f" -o "${2:-$PWD}"
+fi
 
 FAIL=0
 BLOCKERS=()
@@ -730,6 +761,27 @@ fi
 # installer starts the application at the end, and an unprepared prefix means
 # the first thing a new user sees is the one-frame freeze this project exists to
 # fix.
+if [[ $MODE == install-fetch ]]; then
+  hdr "Choosing a rekordbox version"
+  _f="$(rbw_fetcher)" || { bad "fetch-rekordbox.sh not found"; exit 1; }
+  _dl="${RBW_DOWNLOAD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/rekordbox-wine}"
+  mkdir -p "$_dl"
+  # The chosen installer is read back off the filesystem rather than parsed out
+  # of the downloader's output, so changing its wording cannot silently yield an
+  # empty path. The marker file names the choice, because "newest on disk" is
+  # wrong the moment someone picks an older version deliberately.
+  _pick="$_dl/.chosen"; rm -f "$_pick"
+  RBW_PICK_FILE="$_pick" "$_f" -o "$_dl" "${FETCH_ARGS[@]}" || { bad "could not obtain an installer"; exit 1; }
+  INSTALLER="$(cat "$_pick" 2>/dev/null || true)"
+  [[ -f "${INSTALLER:-}" ]] || \
+    INSTALLER="$(find "$_dl" -maxdepth 1 -name 'Install_rekordbox_x64_*.exe' 2>/dev/null | sort -V | tail -1)"
+  [[ -n "${INSTALLER:-}" && -f "$INSTALLER" ]] || {
+    bad "no installer .exe was produced"
+    note "unzip the download and pass the .exe to $SELF --install <file>"; exit 1; }
+  ok "using $INSTALLER"
+  MODE=install
+fi
+
 if [[ $MODE == install ]]; then
   hdr "Installing rekordbox"
   note "$INSTALLER"

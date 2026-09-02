@@ -34,6 +34,9 @@ install -Dm755 bin/verifyloaded.sh                "$share/bin/verifyloaded.sh"
 install -Dm755 bin/build-patched-dlls.sh          "$share/bin/build-patched-dlls.sh"
 install -Dm755 bin/build-wineusb-hcd.sh           "$share/bin/build-wineusb-hcd.sh"
 install -Dm755 bin/rbclean.sh                     "$share/bin/rbclean.sh"
+# Finds and downloads the latest rekordbox installer from rekordbox.com, which
+# is what `rekordbox-wine --install` with no argument calls.
+install -Dm755 bin/fetch-rekordbox.sh             "$share/bin/fetch-rekordbox.sh"
 install -Dm755 bin/pdbcheck.py                    "$share/bin/pdbcheck.py"
 
 # PE builtins, overridden per-prefix by the launcher.
