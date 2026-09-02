@@ -787,4 +787,44 @@ fi
 
 hdr "Launching"
 note "$EXE"
+
+# WHICH REKORDBOX, AND HAS IT BEEN MEASURED?
+#
+# No path here is ever hardcoded -- the find above takes the newest install, so
+# a rekordbox self-update is picked up with nothing to do. That much has been
+# true since thirteen harness scripts broke on the 7.2.17 -> 7.2.18 update.
+#
+# What was missing is the RECORD. Wine versions get supported-wine.txt, a build
+# gate, a launch refusal and a daily CI watch; rekordbox versions got nothing,
+# so "does the version you are running actually work" had no written answer.
+#
+# This WARNS and does not refuse, and the asymmetry is deliberate. An unlisted
+# Wine is a broken install -- the components cannot load, there is nothing to
+# try. An unlisted rekordbox is merely unmeasured: our fixes are Wine-side
+# implementations of APIs rekordbox calls, and a point release does not
+# invalidate them. Refusing would stop someone DJing over a paperwork gap.
+# The reasoning is written out in full in upstream/supported-rekordbox.txt.
+RB_VER="$(basename "$(dirname "$EXE")" | sed 's/^rekordbox //')"
+# Look in DATADIR first, which is where the package puts its own data and is
+# the one path this script already knows is right. The source-tree location
+# comes next, and the doc directory is DERIVED from DATADIR rather than
+# hardcoded to /usr/share/doc -- the same mistake as the winepaths.sh one, where
+# a hardcoded /usr/lib/wine worked on Arch and silently did nothing elsewhere.
+RB_SUPPORTED=""
+for _rs in "$DATADIR/supported-rekordbox.txt" \
+           "$DATADIR/upstream/supported-rekordbox.txt" \
+           "$(dirname "$DATADIR")/doc/rekordbox-wine/supported-rekordbox.txt"; do
+  [[ -r "$_rs" ]] && { RB_SUPPORTED="$_rs"; break; }
+done
+if [[ -n "$RB_VER" && -n "$RB_SUPPORTED" ]]; then
+  if grep -qE "^[[:space:]]*${RB_VER//./\.}([[:space:]]|$)" "$RB_SUPPORTED"; then
+    ok "rekordbox $RB_VER — measured; see docs/GOLD-STATUS.md"
+  else
+    warn "rekordbox $RB_VER has not been measured by this project"
+    note "Known: $(grep -vE '^[[:space:]]*(#|$)' "$RB_SUPPORTED" | awk '{print $1}' | paste -sd, | sed 's/,/, /g')"
+    note "Starting anyway — the fixes are Wine-side and a rekordbox update does"
+    note "not invalidate them. If everything works, say so: adding $RB_VER to"
+    note "upstream/supported-rekordbox.txt is a one-line contribution."
+  fi
+fi
 exec env WINEDEBUG="${WINEDEBUG:--all}" WINESERVER="$PRIVATE_WINE/bin/wineserver" "$WINE" "$EXE" "$@"

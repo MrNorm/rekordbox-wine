@@ -1,0 +1,90 @@
+# rekordbox versions this project has actually measured.
+#
+# FORMAT, because the launcher parses this file: a version line is a bare
+# version at the start of a line and nothing else on it. Every other line is a
+# comment starting with '#'. Same shape as upstream/patches/supported-wine.txt,
+# and for the same reason -- prose written as indented continuation lines makes
+# `awk '{print $1}'` report "rekordbox" as a version.
+#
+# ============================================================================
+# WHY THIS FILE WARNS AND supported-wine.txt REFUSES
+# ============================================================================
+#
+# These two lists look alike and mean opposite things. Getting that backwards
+# would be a bad bug in either direction, so it is written down here.
+#
+# An unlisted WINE version is a BROKEN INSTALL. The patched components are
+# compiled against Wine's internals; a mismatch cannot load, and the
+# application either fails to render or fails to start. There is nothing to try.
+# So the launcher REFUSES, and that refusal is correct -- see THEMES/T14.
+#
+# An unlisted REKORDBOX version is merely UNMEASURED. Our fixes are Wine-side:
+# they implement Windows APIs that rekordbox calls. A newer rekordbox does not
+# invalidate them, it just has not been through the acceptance tests. Almost
+# certainly it works; possibly some capability regressed. Refusing to start
+# would be the launcher stopping someone from DJing over a paperwork gap, and
+# that is not a trade this project gets to make on a user's behalf.
+#
+# So: WARN, name what is untested, and start.
+#
+# ============================================================================
+# THE EVIDENCE THAT THIS MATTERS AT ALL
+# ============================================================================
+#
+# On 2026-08-18 the user updated 7.2.17 -> 7.2.18 and the 7.2.17 directory was
+# removed. THIRTEEN harness scripts had `rekordbox 7.2.17` hardcoded in a path.
+# Every one would have launched nothing and reported it as a failure of whatever
+# it was measuring. bin/rbexe.sh exists because of that day, and nothing shipped
+# hardcodes a rekordbox version any more.
+#
+# ============================================================================
+# 7.2.17 -- measured 2026-08-13 .. 2026-08-18, on wine-staging 11.15
+# ============================================================================
+#   T01 first window and repaint (the dxgi WaitForVBlank fix was found here)
+#   sign-in to an AlphaTheta account; library, waveform, two-deck playback
+#   T04 File menu and the EXPORT-mode view selector
+#   T05 DDJ-400: MIDI ports, jog wheels, LEDs
+#   T08 frame rate: 58 fps with a track playing, no decay over 27 minutes
+#
+# 7.2.18 -- measured 2026-08-18 .. 2026-08-20, on wine-staging 11.15
+# ============================================================================
+#   T02 USB export, with the resulting export.pdb validated outside Wine
+#   T03 audio: DDJ-400 exclusive mode at 44100 Hz; PC MASTER OUT at 1.000x
+#       with zero stream teardowns over 465 s
+#   T10 engine behaviour
+#   CROSS-VERSION CHECK, and the reason both versions are listed rather than
+#   just the newest: the engine numbers on 7.2.18 matched 7.2.17 to two decimal
+#   places -- 0.99x with PC MASTER OUT off and zero rebuilds, 0.05x with it on
+#   and six rebuilds per 40 s, on the then-current stack. A rekordbox point
+#   release did not move any measurement.
+#
+# 7.2.18 on wine-staging 11.16 -- 2026-09-02
+# ============================================================================
+#   Launches, full UI, 187-track library, window repaints. That is ALL that has
+#   been re-measured since the Wine move. Audio, USB export and the DDJ-400 are
+#   unproven on 11.16 regardless of which rekordbox version is installed --
+#   that is a WINE-axis gap and is tracked in supported-wine.txt, not here.
+#
+# NOT OURS, for reference: AppDB carries "Garbage" reports for 7.2.8 (Dec 2025)
+# and 7.2.14 (Jun 2026), both on Nvidia/AMD, both predating the dxgi fix.
+#
+# ============================================================================
+# WHEN A NEW REKORDBOX APPEARS
+# ============================================================================
+#
+# rekordbox updates itself from inside the prefix (its update manager offers
+# the new build at startup). Nothing needs rebuilding -- no Wine component is
+# tied to a rekordbox version. The launcher will pick up the new install
+# automatically, because it takes the newest rekordbox.exe it can find rather
+# than a path anyone typed.
+#
+# What to do: run it, and if the capabilities in docs/GOLD-STATUS.md still hold,
+# add the version below with what you ran. If something regressed, open a theme.
+# CI cannot do this for you: rekordbox is proprietary, the installer is 660 MB
+# and behind a JS download page, and signing in needs a real AlphaTheta account.
+# This axis is human-measured by construction, which is exactly why it needs a
+# written record instead of a memory.
+#
+# version
+7.2.17
+7.2.18

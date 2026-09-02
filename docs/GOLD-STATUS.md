@@ -21,10 +21,36 @@ Against (2) it is **not finished**, and the two things standing in the way are
 named at the bottom — one of them needs a USB stick and thirty minutes, the
 other is a genuine open bug.
 
+## Which versions this was measured on
+
+**Every row below was measured on wine-staging 11.15, on rekordbox 7.2.17 or
+7.2.18.** Two axes move under this project and they behave differently:
+
+| axis | what an unlisted version means | what the launcher does |
+|---|---|---|
+| **Wine** — `upstream/patches/supported-wine.txt` | the patched components cannot load; nothing will work | **refuses**, and says what to rebuild |
+| **rekordbox** — `upstream/supported-rekordbox.txt` | unmeasured, almost certainly fine | **warns**, and starts |
+
+The asymmetry is deliberate: our fixes are Wine-side implementations of Windows
+APIs that rekordbox calls, so a rekordbox point release does not invalidate
+them, while a Wine release routinely does. On 2026-08-18 the engine numbers on
+7.2.18 matched 7.2.17 **to two decimal places**, which is the only cross-version
+evidence there is, and it points that way.
+
+**On wine-staging 11.16 (2026-09-02) only two of these rows have been
+re-measured** — the window renders, and it repaints. Everything else in this
+document is a 11.15 result until someone re-runs it.
+
+**Honest limitation of this table:** it predates per-row version attribution.
+Measurements are split across 7.2.17 and 7.2.18 and the rows do not say which,
+because the record was not kept that way at the time. Rather than assign
+versions retrospectively from memory, they are left unattributed and this
+paragraph says so. New rows should name the versions.
+
 ## Verdict by capability
 
 Every row is a measurement with a date. Rows marked **(today)** were re-verified
-in this session; the rest carry the date they were last measured.
+in the session that wrote them; the rest carry the date they were last measured.
 
 ### The application
 

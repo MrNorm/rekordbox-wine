@@ -92,6 +92,12 @@ install -dm755 "$doc/patches"
 install -m644 upstream/patches/0*.patch "$doc/patches/"
 install -m644 upstream/patches/rbw-usbhcd.c "$doc/patches/"
 install -m644 upstream/patches/supported-wine.txt "$doc/patches/"
+# Which rekordbox versions have been measured. The launcher reads this at
+# startup to say whether the version you are running has been through the
+# acceptance tests -- it warns, it does not refuse. It lives beside the docs
+# rather than under patches/ because it constrains nothing about the build.
+install -m644 upstream/supported-rekordbox.txt "$share/supported-rekordbox.txt"
+install -m644 upstream/supported-rekordbox.txt "$doc/supported-rekordbox.txt"
 for n in upstream/reports/NOTES-*.md; do [[ -f "$n" ]] && install -m644 "$n" "$doc/patches/"; done
 
 echo "staged rekordbox-wine into $DEST"

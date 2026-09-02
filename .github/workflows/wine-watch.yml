@@ -57,7 +57,9 @@ jobs:
         run: |
           set -euo pipefail
           ver='${{ steps.arch.outputs.version }}'
-          known="$(grep -vE '^[[:space:]]*(#|$)' upstream/patches/supported-wine.txt | awk '{print $1}' | paste -sd', ')"
+          # `paste -sd', '` cycles the delimiter LIST between fields rather than
+          # using ", " as one separator, so two versions joined as "11.15,11.16".
+          known="$(grep -vE '^[[:space:]]*(#|$)' upstream/patches/supported-wine.txt | awk '{print $1}' | paste -sd, | sed 's/,/, /g')"
           echo "known=$known" >> "$GITHUB_OUTPUT"
           if grep -qE "^[[:space:]]*${ver//./\\.}([[:space:]]|$)" upstream/patches/supported-wine.txt; then
             echo "drifted=no" >> "$GITHUB_OUTPUT"

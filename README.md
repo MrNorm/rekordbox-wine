@@ -121,6 +121,52 @@ The launcher finds the newest `rekordbox.exe` in the prefix, so a **rekordbox**
 update just works, and Wine's regenerated menu entry is corrected again on the
 next start.
 
+### When rekordbox updates itself
+
+Nothing to do, and nothing to rebuild.
+
+rekordbox updates itself from inside the prefix — its update manager offers the
+new build at startup, and you can take it. No Wine component is tied to a
+rekordbox version, and the launcher starts the newest `rekordbox.exe` it finds
+rather than a path anyone typed, so the new install is picked up automatically.
+
+The launcher does tell you where you stand:
+
+```
+ok    rekordbox 7.2.18 — measured; see docs/GOLD-STATUS.md
+```
+
+or, on a version this project has not put through its tests:
+
+```
+warn  rekordbox 7.3.0 has not been measured by this project
+      Known: 7.2.17, 7.2.18
+      Starting anyway — the fixes are Wine-side and a rekordbox update does
+      not invalidate them.
+```
+
+**It warns and starts. It does not refuse** — and that is the opposite of what
+it does for an unlisted *Wine* version, deliberately:
+
+| axis | an unlisted version means | the launcher |
+|---|---|---|
+| **Wine** | the patched libraries cannot load — nothing will work | **refuses**, and says what to rebuild |
+| **rekordbox** | unmeasured, almost certainly fine | **warns**, and starts |
+
+Our fixes implement Windows APIs that rekordbox calls, so a rekordbox point
+release does not invalidate them; a Wine release routinely does. Refusing to
+start over an unmeasured rekordbox would be stopping you from DJing to satisfy
+a paperwork gap. The one cross-version measurement there is supports this: on
+2026-08-18 the audio-engine numbers on 7.2.18 matched 7.2.17 to two decimal
+places.
+
+If a new version works for you, `upstream/supported-rekordbox.txt` is a one-line
+contribution. If something regressed, that is worth an issue — **this axis
+cannot be tested in CI**: rekordbox is proprietary, the installer is 660 MB
+behind a JavaScript download page, and signing in needs a real AlphaTheta
+account. It is human-measured by construction, which is why it is written down
+rather than remembered.
+
 ### When your distribution upgrades Wine
 
 This is the one update that costs you something, and it is worth understanding
@@ -215,6 +261,18 @@ distinction cost a day.
 
 To uninstall completely, remove the package and delete
 `~/.local/share/rekordbox-wine`. Nothing outside it was ever modified.
+
+## Where this is written down publicly
+
+`docs/PUBLISHING.md` is the honest ledger: this repository — README,
+`docs/GOLD-STATUS.md`, Releases, and the patches themselves — is the only thing
+published so far. The WineHQ Bugzilla reports, the WirePlumber report and the
+two AppDB submissions are **written and unfiled**; each needs an account and a
+human, and `docs/PUBLISHING.md` says exactly which and why.
+
+That matters most for one of them: `IDXGIOutput::WaitForVBlank` is an
+`E_NOTIMPL` stub in Wine, and without it **no JUCE 8 application paints a second
+frame**. Until that is filed, every other person hitting it starts from zero.
 
 ## What works
 
