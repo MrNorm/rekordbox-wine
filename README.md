@@ -19,14 +19,14 @@ window paints one frame and freezes.
 
 **Contents:** [Requirements](#requirements) · [Install](#install) ·
 [Installing rekordbox](#installing-rekordbox-itself) · [DDJ-400 setup](#ddj-400-setup) ·
-[Troubleshooting](#troubleshooting) · [Keeping it working](#keeping-it-working) ·
+[Debian and Fedora](#debian-and-fedora) · [Troubleshooting](#troubleshooting) · [Keeping it working](#keeping-it-working) ·
 [What works](#what-works) · [What is not proven](#what-is-not-proven)
 
 ## Requirements
 
 | | |
 |---|---|
-| Distribution | **Arch** (packaged and tested). Debian and Fedora packaging exists but has never been built on those distributions. |
+| Distribution | **Arch**, **Debian trixie**, **Fedora 43** — see [Debian and Fedora](#debian-and-fedora) for the Wine each one needs. |
 | Architecture | x86_64 |
 | Wine | **wine-staging**, currently **11.16**. Plain `wine` is untested. |
 | GPU | Tested on Intel Iris Xe. Nvidia and AMD untested here. |
@@ -75,8 +75,35 @@ directory, so hand it the result: `paru -U rekordbox-wine-git-*.pkg.tar.zst`.
 **Not on the AUR.** AUR pushes have been blocked over malware injection; this
 project distributes from GitHub instead.
 
-`packaging/debian/` and `packaging/rekordbox-wine.spec` are complete and produce
-the same payload, but neither has been built on its own distribution.
+### Debian and Fedora
+
+No prebuilt packages yet — build them, which takes the same 20–30 minutes:
+
+```sh
+git clone https://github.com/MrNorm/rekordbox-wine.git
+cd rekordbox-wine
+packaging/build-deb.sh        # Debian/Ubuntu  -> ../rekordbox-wine_*.deb
+packaging/build-rpm.sh        # Fedora         -> ~/rpmbuild/RPMS/x86_64/*.rpm
+```
+
+The `.deb` is verified end to end on Debian trixie — built, markers checked
+inside the package, installed, launcher run. The `.rpm` build is newer; report
+anything that breaks.
+
+**You need Wine from the [WineHQ repository](https://gitlab.winehq.org/wine/wine/-/wikis/Download)**,
+because the distribution's own Wine is too old for the patch series. Measured
+2026-09-02:
+
+| | own Wine | with WineHQ repo | |
+|---|---|---|---|
+| Debian trixie | 10.0 | **11.16** | works |
+| Fedora 43 | 11.0 | **11.16** | works |
+| Fedora 42 | 10.20 | 11.8 | too old |
+| Fedora 41 | 10.15 | 10.18 | too old |
+
+Install `winehq-staging` from that repository first. The launcher checks the
+version on every start and refuses rather than running against a Wine the
+components were not built for.
 
 ## Installing rekordbox itself
 

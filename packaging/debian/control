@@ -2,6 +2,11 @@ Source: rekordbox-wine
 Section: sound
 Priority: optional
 Maintainer: rekordbox-wine maintainers <nobody@example.invalid>
+# The compat level is declared HERE and only here. packaging/debian/compat also
+# existed, and dh refuses to run when both are present:
+#   dh: error: debhelper compat level specified both in debian/compat and in
+#   debian/control
+# It failed at `debian/rules clean`, before anything was built.
 Build-Depends: debhelper-compat (= 13), clang, lld, python3, curl, flex, bison,
  libx11-dev, libxext-dev, libxrandr-dev, libxcomposite-dev, libxfixes-dev,
  libxi-dev, libxcursor-dev, libasound2-dev, libdbus-1-dev, libfreetype-dev,
@@ -11,7 +16,20 @@ Homepage: https://github.com/MrNorm/rekordbox-wine
 
 Package: rekordbox-wine
 Architecture: amd64
-Depends: ${shlibs:Depends}, ${misc:Depends}, wine (>= 11.0) | wine-staging (>= 11.0),
+# winehq-staging is named first because it is the only package that actually
+# ships the Wine version this project targets: Debian trixie's own wine is 10.0
+# and Ubuntu's is older still. It declares `Provides: wine` UNVERSIONED, and an
+# unversioned Provides does not satisfy a versioned dependency -- so
+# `wine (>= 11.0)` alone is unsatisfiable on the one configuration we support.
+# The launcher enforces the exact version at runtime, which is the check that
+# matters; this only has to get Wine onto the machine.
+# No ${shlibs:Depends}: dh_shlibdeps is overridden away in debian/rules,
+# because the payload is prebuilt PE and unix Wine libraries that the scanner
+# has no useful opinion about. Leaving the substitution in produced
+# "substitution variable ${shlibs:Depends} used, but is not defined" on every
+# build.
+Depends: ${misc:Depends},
+ winehq-staging | wine-staging | wine (>= 11.0),
  libasound2t64 | libasound2, alsa-utils, python3
 Recommends: rtkit
 Suggests: pipewire-alsa, wine-mono, wine-gecko

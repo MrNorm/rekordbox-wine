@@ -24,7 +24,11 @@ BuildRequires:  libX11-devel libXext-devel libXrandr-devel libXcomposite-devel
 BuildRequires:  libXfixes-devel libXi-devel libXcursor-devel
 BuildRequires:  alsa-lib-devel dbus-devel freetype-devel gnutls-devel libusb1-devel
 
-Requires:       wine >= 11.0
+# Fedora 43's own wine is 11.0 and WineHQ's F43 repo carries 11.16; F41/F42 top
+# out at 10.18, too old for this patch series. The dependency is deliberately
+# loose -- the launcher checks the exact version at runtime and refuses if it
+# does not match what the components were built against.
+Requires:       (winehq-staging or wine)
 Requires:       alsa-lib alsa-utils python3
 Recommends:     rtkit
 Suggests:       pipewire-alsa wine-mono wine-gecko
@@ -93,10 +97,13 @@ rekordbox-wine is installed. It does NOT modify your system Wine.
 
 Two commands, then you are done. Neither needs root.
 
-  1. Install rekordbox itself. It is proprietary and not included -- download
-     it from rekordbox.com, then:
+  1. Install rekordbox itself. It is proprietary and not included, so this
+     downloads it from rekordbox.com and installs it:
 
-       rekordbox-wine --install ~/Downloads/rekordbox_7.2.18.exe
+       rekordbox-wine --install
+
+     Add --latest to skip the version prompt, or pass an installer you already
+     have. You sign in with your own AlphaTheta account.
 
   2. Start it:
 

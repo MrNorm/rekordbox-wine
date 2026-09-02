@@ -4,10 +4,13 @@ rekordbox-wine is installed. It does NOT modify your system Wine.
 
 Two commands, then you are done. Neither needs root.
 
-  1. Install rekordbox itself. It is proprietary and not included -- download
-     it from rekordbox.com, then:
+  1. Install rekordbox itself. It is proprietary and not included, so this
+     downloads it from rekordbox.com and installs it:
 
-       rekordbox-wine --install ~/Downloads/rekordbox_7.2.18.exe
+       rekordbox-wine --install
+
+     Add --latest to skip the version prompt, or pass an installer you already
+     have. You sign in with your own AlphaTheta account.
 
   2. Start it:
 

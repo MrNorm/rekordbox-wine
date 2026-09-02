@@ -1,0 +1,207 @@
+name: packages
+
+# deb and rpm, built and installed on their own distributions.
+#
+# These two packaging trees existed for two weeks and had never been built on
+# Debian or Fedora -- the README said so. Untested packaging is a claim, not a
+# fact, and this project has already paid once for the difference (THEMES/T14).
+#
+# WHICH DISTRIBUTIONS, AND WHY THESE VERSIONS. The patch series targets one Wine
+# (upstream/patches/supported-wine.txt), so a distribution can only be supported
+# if it can actually install that Wine:
+#
+#   Debian trixie  own wine 10.0   + WineHQ repo -> 11.16   supported
+#   Fedora 43      own wine 11.0   + WineHQ repo -> 11.16   supported
+#   Fedora 42      own wine 10.20  + WineHQ repo -> 11.8    too old
+#   Fedora 41      own wine 10.15  + WineHQ repo -> 10.18   too old
+#
+# Measured 2026-09-02, not assumed.
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'packaging/**'
+      - 'bin/**'
+      - 'upstream/patches/**'
+      - '.github/workflows/packages.yml'
+  pull_request:
+    paths:
+      - 'packaging/**'
+      - 'bin/**'
+      - 'upstream/patches/**'
+  schedule:
+    - cron: '41 4 * * 0'   # weekly; the daily Arch build is the fast signal
+  workflow_dispatch:
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+      options: --privileged
+    timeout-minutes: 120
+    steps:
+      - name: WineHQ repository and build dependencies
+        run: |
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates wget gnupg git
+          dpkg --add-architecture i386
+          mkdir -p /etc/apt/keyrings
+          wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
+          wget -qNP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/debian/dists/trixie/winehq-trixie.sources
+          apt-get update -qq
+          apt-get install -y -qq --install-recommends winehq-staging
+          apt-get install -y -qq --no-install-recommends \
+            devscripts debhelper build-essential clang lld python3 curl flex bison unzip \
+            libx11-dev libxext-dev libxrandr-dev libxcomposite-dev libxfixes-dev \
+            libxi-dev libxcursor-dev libasound2-dev libdbus-1-dev libfreetype-dev \
+            libgnutls28-dev libusb-1.0-0-dev
+          wine --version
+
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Record the Wine being built against
+        id: wine
+        run: echo "version=$(wine --version | sed 's/^wine-//;s/ .*//')" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          RBW_ALLOW_UNTESTED_WINE: '1'
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$PWD"
+          # build-deb.sh stages packaging/debian to ./debian first --
+          # dpkg-buildpackage requires debian/ at the source root, and without
+          # that step it stops at "cannot open file debian/changelog", which is
+          # exactly how this packaging sat unbuilt.
+          packaging/build-deb.sh
+
+      - name: The .deb must contain the patches
+        # Same claim as the Arch job: markers in the files that ended up inside
+        # the package, not in the build tree.
+        run: |
+          set -euo pipefail
+          deb="$(ls ../rekordbox-wine_*.deb | head -1)"
+          echo "inspecting $deb"
+          mkdir -p /tmp/x && dpkg-deb -x "$deb" /tmp/x
+          ver='${{ steps.wine.outputs.version }}'
+          fail=0
+          ck() {
+            local f="/tmp/x/$1" m="$2"
+            [[ -f "$f" ]] || { echo "::error::missing from package: $1"; fail=1; return; }
+            [[ "$(strings -a "$f" | grep -c -- "$m" || true)" -gt 0 ]] \
+              && echo "  ok  $1 ($m)" || { echo "::error::$1 has no '$m'"; fail=1; }
+          }
+          ck "usr/share/rekordbox-wine/artifacts/dxgi-patched-native-$ver.dll" RBW-PATCH
+          ck "usr/share/rekordbox-wine/artifacts/mmdevapi-patched-native-$ver.dll" RBW-MMDEV
+          ck "usr/share/rekordbox-wine/artifacts/setupapi-patched-native-$ver.dll" PhysicalDeviceObjectName
+          ck "usr/share/rekordbox-wine/winedll/winealsa.so"  RBW-EVENT3
+          ck "usr/share/rekordbox-wine/winedll/winex11.so"   RBW-POPUP
+          ck "usr/share/rekordbox-wine/winedll/mountmgr.so"  RBW-REMOVABLE
+          ck "usr/share/rekordbox-wine/winedll/mountmgr.sys" RBW-VOLNODE
+          ck "usr/share/rekordbox-wine/winedll/wineusb.so"   RBW-USBHCD
+          [[ -f /tmp/x/usr/share/rekordbox-wine/winedll/.built-for-wine ]] \
+            && [[ "$(cat /tmp/x/usr/share/rekordbox-wine/winedll/.built-for-wine)" == "$ver" ]] \
+            && echo "  ok  .built-for-wine = $ver" \
+            || { echo "::error::.built-for-wine missing or wrong"; fail=1; }
+          exit $fail
+
+      - name: Install it, and run the launcher's checker
+        # The dependency solver is the point here: winehq-staging declares
+        # `Provides: wine` UNVERSIONED, so a `wine (>= 11.0)` dependency is
+        # unsatisfiable on exactly the configuration this project requires.
+        # Installing for real is the only way that gets caught.
+        run: |
+          set -euo pipefail
+          apt-get install -y -qq ../rekordbox-wine_*.deb
+          useradd -m tester
+          out=$(runuser -u tester -- rekordbox-wine --check 2>&1 || true)
+          echo "$out"
+          ver='${{ steps.wine.outputs.version }}'
+          echo "$out" | grep -q "no artifact for wine $ver" && { echo "::error::no artifact for its own Wine"; exit 1; } || true
+          echo "$out" | grep -q "libraries built for wine" && { echo "::error::ABI mismatch in its own package"; exit 1; } || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rekordbox-wine-deb-wine${{ steps.wine.outputs.version }}
+          path: ../rekordbox-wine_*.deb
+          if-no-files-found: error
+
+  rpm:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:43        # F41/F42 cannot get Wine 11.16; see the header
+      options: --privileged
+    timeout-minutes: 120
+    steps:
+      - name: WineHQ repository and build dependencies
+        run: |
+          set -euo pipefail
+          dnf -y install dnf-plugins-core rpm-build rpmdevtools git tar >/dev/null
+          dnf config-manager addrepo --from-repofile=https://dl.winehq.org/wine-builds/fedora/43/winehq.repo
+          dnf -y install winehq-staging >/dev/null
+          dnf -y install clang lld python3 curl flex bison unzip binutils \
+            libX11-devel libXext-devel libXrandr-devel libXcomposite-devel \
+            libXfixes-devel libXi-devel libXcursor-devel \
+            alsa-lib-devel dbus-devel freetype-devel gnutls-devel libusb1-devel >/dev/null
+          wine --version
+
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Record the Wine being built against
+        id: wine
+        run: echo "version=$(wine --version | sed 's/^wine-//;s/ .*//')" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          RBW_ALLOW_UNTESTED_WINE: '1'
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$PWD"
+          packaging/build-rpm.sh
+
+      - name: The .rpm must contain the patches
+        run: |
+          set -euo pipefail
+          rpm_file="$(find ~/rpmbuild/RPMS -name 'rekordbox-wine-*.rpm' | head -1)"
+          echo "inspecting $rpm_file"
+          mkdir -p /tmp/x && (cd /tmp/x && rpm2cpio "$rpm_file" | cpio -idm --quiet)
+          ver='${{ steps.wine.outputs.version }}'
+          fail=0
+          ck() {
+            local f="/tmp/x/$1" m="$2"
+            [[ -f "$f" ]] || { echo "::error::missing from package: $1"; fail=1; return; }
+            [[ "$(strings -a "$f" | grep -c -- "$m" || true)" -gt 0 ]] \
+              && echo "  ok  $1 ($m)" || { echo "::error::$1 has no '$m'"; fail=1; }
+          }
+          ck "usr/share/rekordbox-wine/artifacts/dxgi-patched-native-$ver.dll" RBW-PATCH
+          ck "usr/share/rekordbox-wine/artifacts/mmdevapi-patched-native-$ver.dll" RBW-MMDEV
+          ck "usr/share/rekordbox-wine/winedll/winealsa.so"  RBW-EVENT3
+          ck "usr/share/rekordbox-wine/winedll/winex11.so"   RBW-POPUP
+          ck "usr/share/rekordbox-wine/winedll/wineusb.so"   RBW-USBHCD
+          exit $fail
+
+      - name: Install it, and run the launcher's checker
+        run: |
+          set -euo pipefail
+          dnf -y install "$(find ~/rpmbuild/RPMS -name 'rekordbox-wine-*.rpm' | head -1)"
+          useradd -m tester
+          out=$(runuser -u tester -- rekordbox-wine --check 2>&1 || true)
+          echo "$out"
+          ver='${{ steps.wine.outputs.version }}'
+          echo "$out" | grep -q "no artifact for wine $ver" && { echo "::error::no artifact for its own Wine"; exit 1; } || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rekordbox-wine-rpm-wine${{ steps.wine.outputs.version }}
+          path: ~/rpmbuild/RPMS/**/*.rpm
+          if-no-files-found: error
