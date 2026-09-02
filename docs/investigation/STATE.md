@@ -80,6 +80,30 @@ whose tree matched local `389ee04`. Publish by committing onto a `publish`
 branch based on `origin/master` and fast-forwarding — never by pushing the
 262-commit local history, which was deliberately not published.
 
+### Debian and Fedora, opened up 2026-09-02
+
+`.deb` and `.rpm` now build **and install** on their own distributions. The
+packaging had existed for two weeks and had never been built; it did not work.
+Three defects, all found by building it: `debian/` must be at the source root
+(it lives in `packaging/`), `debian/compat` and `debhelper-compat` both present
+made `dh` refuse outright, and `Depends: wine (>= 11.0)` was **unsatisfiable**
+because `winehq-staging` declares `Provides: wine` unversioned.
+
+**The support boundary is decided by Wine, and is measured:**
+
+| | own Wine | + WineHQ | |
+|---|---|---|---|
+| Debian trixie | 10.0 | 11.16 | supported |
+| Fedora 43 | 11.0 | 11.16 | supported |
+| Fedora 42 | 10.20 | 11.8 | too old |
+| Fedora 41 | 10.15 | 10.18 | too old |
+
+No distribution ships 11.16, so the WineHQ repository is mandatory on both.
+`packaging/build-deb.sh` and `build-rpm.sh` do the staging each format needs;
+`.github/workflows/packages.yml` builds and installs both so this cannot rot
+again. **No prebuilt deb/rpm are published** — only Arch, because only Arch has
+been verified outside a container.
+
 ### Next action
 
 1. **Re-measure audio, PC MASTER OUT, USB export and the DDJ-400 on 11.16.**
