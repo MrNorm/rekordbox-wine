@@ -41,7 +41,8 @@ jobs:
 
     steps:
       - name: Enable multilib and sync
-        # wine-staging is in [multilib]. Without this the dependency does not
+        # wine-staging itself is in [extra], but it depends on lib32-* packages
+        # that are only in [multilib]. Without this the dependency does not
         # resolve and the failure reads as "package not found", which sends you
         # looking in the wrong place.
         run: |

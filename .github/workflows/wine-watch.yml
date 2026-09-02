@@ -30,12 +30,27 @@ jobs:
         id: arch
         run: |
           set -euo pipefail
-          curl -fsSL https://archlinux.org/packages/multilib/x86_64/wine-staging/json/ > /tmp/arch.json
-          # pkgver is "11.16". pkgrel is packaging-only and does not move Wine,
-          # so comparing it would cry wolf on every rebuild.
-          ver="$(python3 -c 'import json;print(json.load(open("/tmp/arch.json"))["pkgver"])')"
+          # wine-staging lives in [extra]. It was [community] historically and
+          # this job first asked [multilib] — which 404s, because multilib holds
+          # the lib32-* dependencies rather than wine itself. Try the plausible
+          # repos rather than hardcoding one, so a future move is a slower answer
+          # and not a red pipeline that says nothing about Wine.
+          ver=""
+          for repo in extra multilib core; do
+            if curl -fsSL "https://archlinux.org/packages/$repo/x86_64/wine-staging/json/" > /tmp/arch.json 2>/dev/null; then
+              # pkgver is "11.16". pkgrel is packaging-only and does not move
+              # Wine, so comparing it would cry wolf on every rebuild.
+              ver="$(python3 -c 'import json;print(json.load(open("/tmp/arch.json"))["pkgver"])')"
+              echo "found wine-staging in [$repo]"
+              break
+            fi
+          done
+          if [[ -z "$ver" ]]; then
+            echo "::error::could not find wine-staging in any known Arch repo — has it moved or been renamed?"
+            exit 1
+          fi
           echo "version=$ver" >> "$GITHUB_OUTPUT"
-          echo "Arch multilib wine-staging: $ver"
+          echo "Arch wine-staging: $ver"
 
       - name: Compare against what has been measured
         id: cmp
