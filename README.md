@@ -13,6 +13,11 @@ Ten Wine patches and a launcher that applies and verifies them.
 > [rekordbox.com](https://rekordbox.com) and sign in with your own AlphaTheta
 > account.
 
+![rekordbox decks and mixer running under Wine](docs/images/decks-mixer.png)
+
+Decks and mixer, rekordbox 7.2.18 on wine-staging 11.16. On stock Wine this
+window paints one frame and freezes.
+
 **Contents:** [Requirements](#requirements) · [Install](#install) ·
 [First run](#first-run) · [DDJ-400 setup](#ddj-400-setup) ·
 [Troubleshooting](#troubleshooting) · [Keeping it working](#keeping-it-working) ·

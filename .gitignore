@@ -27,3 +27,8 @@ packaging/pkg/
 packaging/rekordbox-wine/
 packaging/*.pkg.tar.zst
 packaging/*.pkg.tar.zst.sig
+
+# Screenshots used by the README. *.png above exists to keep run evidence out of
+# the repository; these are hand-checked crops with no library, account or
+# filesystem detail in them.
+!docs/images/*.png
