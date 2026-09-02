@@ -1,25 +1,56 @@
 # rekordbox under Wine
 
+[![build](https://github.com/MrNorm/rekordbox-wine/actions/workflows/build.yml/badge.svg)](https://github.com/MrNorm/rekordbox-wine/actions/workflows/build.yml)
+[![release](https://img.shields.io/github/v/release/MrNorm/rekordbox-wine)](https://github.com/MrNorm/rekordbox-wine/releases/latest)
+[![licence](https://img.shields.io/badge/licence-LGPL--2.1%20%2F%20MIT-blue)](LICENSE)
+
 Runs **rekordbox 7.2.x** on Linux with a **Pioneer DDJ-400**, including
-**PC MASTER OUT** — sound to the controller and the computer's own speakers at
-the same time.
+**PC MASTER OUT** — audio to the controller and the computer's speakers at once.
 
-This repository is two things: the Wine fixes that make that possible, and the
-investigation that found them. If you just want to DJ, read the next section and
-stop. If you want to know *why* Wine needed nine patches, everything after
-"How this was found" is the paper trail.
+Ten Wine patches and a launcher that applies and verifies them.
 
-> **rekordbox is not included.** It is proprietary. Download it from
+> **rekordbox is not included.** Download it from
 > [rekordbox.com](https://rekordbox.com) and sign in with your own AlphaTheta
-> account. This project ships only the Wine fixes and a launcher.
+> account.
+
+**Contents:** [Requirements](#requirements) · [Install](#install) ·
+[First run](#first-run) · [DDJ-400 setup](#ddj-400-setup) ·
+[Troubleshooting](#troubleshooting) · [Keeping it working](#keeping-it-working) ·
+[What works](#what-works) · [What is not proven](#what-is-not-proven)
+
+## Requirements
+
+| | |
+|---|---|
+| Distribution | **Arch** (packaged and tested). Debian and Fedora packaging exists but has never been built on those distributions. |
+| Architecture | x86_64 |
+| Wine | **wine-staging**, currently **11.16**. Plain `wine` is untested. |
+| GPU | Tested on Intel Iris Xe. Nvidia and AMD untested here. |
+| Controller | DDJ-400 for the controller and PC MASTER OUT claims. Other hardware untested. |
+| Root needed | Only to install the package and replug/reboot for the udev and module rules. |
 
 ## Install
 
-**This is not on the AUR**, and deliberately so — AUR pushes have been blocked
-over malware injection, and the point of this project is a chain you can audit.
-Install it straight from this repository instead.
+### Prebuilt package
 
-### Arch, from GitHub
+```sh
+wine --version    # note the version
+```
+
+Download the asset from [Releases](https://github.com/MrNorm/rekordbox-wine/releases/latest)
+whose name matches that version, then:
+
+```sh
+sudo pacman -U rekordbox-wine-git-*-wine11.16.pkg.tar.zst
+```
+
+Assets are named for the Wine they were built against. The patched libraries are
+compiled against Wine internals and work with that version only. If no asset
+matches your Wine, build from source.
+
+### From source
+
+Compiles the Wine components against the Wine you have. Takes 20–30 minutes.
 
 ```sh
 git clone https://github.com/MrNorm/rekordbox-wine.git
@@ -27,333 +58,208 @@ cd rekordbox-wine/packaging
 makepkg -si
 ```
 
-`packaging/PKGBUILD` clones this repository by URL and records the exact commit it
-built in the package version (`0.2.0.r<commits>.g<short-sha>`), so you can always
-see what you installed. Everything is compiled on your machine against the Wine
-you actually have — no binaries are downloaded.
+The package version records the commit it was built from
+(`0.2.0.r<commits>.g<short-sha>`). To update: `git pull`, then `makepkg -si`.
 
-The first build compiles the Wine components from the patch series and takes
-roughly 20–30 minutes. Subsequent installs reuse the cached Wine source.
+`paru` installs from AUR or from package files, not from a local PKGBUILD
+directory, so hand it the result: `paru -U rekordbox-wine-git-*.pkg.tar.zst`.
 
-Prefer `paru` to do the installing? It builds from AUR or from package *files*,
-not from a local PKGBUILD directory, so hand it the result:
+**Not on the AUR.** AUR pushes have been blocked over malware injection; this
+project distributes from GitHub instead.
 
-```sh
-paru -U rekordbox-wine-git-*.pkg.tar.zst
-```
+### Other distributions
 
-To update later:
+`packaging/debian/` and `packaging/rekordbox-wine.spec` are complete and produce
+the same payload, but neither has been built on its own distribution.
 
-```sh
-cd rekordbox-wine && git pull
-cd packaging && makepkg -si
-```
-
-### Then, on any distribution
+## First run
 
 ```sh
 rekordbox-wine --install ~/Downloads/rekordbox_7.2.18.exe
 rekordbox-wine
 ```
 
-Debian/Ubuntu and Fedora packaging live in `packaging/debian/` and
-`packaging/rekordbox-wine.spec`. Both are complete and produce identical
-payloads, but see the note on portability at the end — they have not yet been
-built on their own distributions.
+Neither needs root. The installer shows one language dialog — press Return.
 
-That is the whole setup, and none of it needs root. rekordbox itself is
-proprietary and not included — download it from
-[rekordbox.com](https://rekordbox.com) and sign in with your own AlphaTheta
-account.
+The launcher runs on every start and repairs drift: builds its private Wine tree,
+installs the patched DLLs into the prefix, applies the audio settings PC MASTER
+OUT needs, and corrects Wine's own menu entry.
 
-The launcher does the rest on **every** start, so it repairs itself if anything
-drifts: builds its private Wine tree, installs the patched DLLs into the prefix,
-applies the audio settings that make PC MASTER OUT work, and corrects Wine's own
-menu entry. `rekordbox-wine --check` reports all of it without changing
-anything.
+`rekordbox-wine --check` reports all of it and changes nothing.
 
-### Using a DDJ-400? Two one-off system steps
+## DDJ-400 setup
 
-These need root or a physical replug, so they cannot be done for you:
+Two one-off steps that need root or physical access:
 
-- **Replug the controller once**, so the udev rule the package installed applies.
-- **Reboot, or `sudo modprobe -r snd_seq_dummy`**, so the module blacklist takes
-  effect. Without it rekordbox binds an ALSA loopback instead of your controller.
+- **Replug the controller**, so the installed udev rule applies.
+- **Reboot, or `sudo modprobe -r snd_seq_dummy`.** Without this rekordbox binds
+  an ALSA loopback instead of the controller.
 
-`rekordbox-wine --check` tells you if either is still outstanding.
+`rekordbox-wine --check` reports whether either is outstanding.
 
-### Updates: one thing to do, and only when Wine moves
+## Troubleshooting
 
-- **rekordbox updates itself** — the launcher always starts the newest version
-  it finds, and re-corrects Wine's regenerated menu entry.
-- **Your distribution updates Wine** — this one is *not* free, and the README
-  used to claim it was. The patched components are compiled against Wine's
-  internal interfaces, which change between releases, so a Wine upgrade means a
-  rebuild. What the launcher guarantees is that it will **tell you** rather than
-  start a session that cannot work: it checks the Wine each component was built
-  for and refuses, naming the rebuild command. See *When your distribution
-  upgrades Wine* below.
+Run `rekordbox-wine --check` first. It names the problem in most cases.
 
-### Starting it: use the launcher, not Wine's own menu entry
+| symptom | cause | fix |
+|---|---|---|
+| `Not launching` and a list of blockers | Wine was upgraded; the patched components are built for the old version | Rebuild — see [Wine updates](#wine-updates) |
+| Starts, one frame, then frozen | Started through Wine's own menu entry, bypassing the patches | Use `rekordbox-wine`, or the entry marked *(via rekordbox-wine)* |
+| Two menu entries, one broken | Wine regenerates its entry on install | The launcher corrects it on every start |
+| Controller absent, or MIDI binds to something else | udev rule or `snd_seq_dummy` | [DDJ-400 setup](#ddj-400-setup) |
+| Sample-rate list empty in Preferences | Audio driver is `winepulse`, which has no exclusive mode | `--check` reports the driver; it must be `alsa` |
+| A sound device vanishes from PipeWire mid-session | WirePlumber 0.5.15 crashes in its own ALSA error handler | `systemctl --user restart wireplumber` |
+| PC MASTER OUT stalls | `WasapiPolling` / `AudioBufferSize` | The launcher seeds both; `--check` verifies them |
 
-When rekordbox's installer runs, Wine writes its own Start Menu entries named
-**"rekordbox 7"**. Those launch the system Wine directly, bypassing the private
-Wine tree and the prefix overrides — so they start an *unpatched* rekordbox,
-which paints one frame and freezes. The obvious-looking entry is the broken one.
+## Keeping it working
 
-`rekordbox-wine` fixes this rather than asking you to remember it: on every
-`--setup` and every launch it rewrites those entries to call the launcher, keeps
-the original beside them as `*.desktop.rbw-original`, and leaves the uninstaller
-alone. `--check` reports them without changing anything.
+### rekordbox updates
 
-So all of these work, and all start the same, correctly configured rekordbox:
+Nothing to do. rekordbox updates itself inside the prefix and the launcher starts
+the newest version it finds. No Wine component is tied to a rekordbox version.
 
-```sh
-rekordbox-wine                       # the command
-```
-
-- **rekordbox 7 (via rekordbox-wine)** — Wine's entry, corrected
-- **rekordbox (Wine)** — the entry this package installs
-
-### Updates
-
-The launcher finds the newest `rekordbox.exe` in the prefix, so a **rekordbox**
-update just works, and Wine's regenerated menu entry is corrected again on the
-next start.
-
-### When rekordbox updates itself
-
-Nothing to do, and nothing to rebuild.
-
-rekordbox updates itself from inside the prefix — its update manager offers the
-new build at startup, and you can take it. No Wine component is tied to a
-rekordbox version, and the launcher starts the newest `rekordbox.exe` it finds
-rather than a path anyone typed, so the new install is picked up automatically.
-
-The launcher does tell you where you stand:
+The launcher names the version it starts:
 
 ```
 ok    rekordbox 7.2.18 — measured; see docs/GOLD-STATUS.md
-```
-
-or, on a version this project has not put through its tests:
-
-```
 warn  rekordbox 7.3.0 has not been measured by this project
-      Known: 7.2.17, 7.2.18
-      Starting anyway — the fixes are Wine-side and a rekordbox update does
-      not invalidate them.
 ```
 
-**It warns and starts. It does not refuse** — and that is the opposite of what
-it does for an unlisted *Wine* version, deliberately:
+It warns and starts. Measured versions are listed in
+[`upstream/supported-rekordbox.txt`](upstream/supported-rekordbox.txt).
 
-| axis | an unlisted version means | the launcher |
-|---|---|---|
-| **Wine** | the patched libraries cannot load — nothing will work | **refuses**, and says what to rebuild |
-| **rekordbox** | unmeasured, almost certainly fine | **warns**, and starts |
+### Wine updates
 
-Our fixes implement Windows APIs that rekordbox calls, so a rekordbox point
-release does not invalidate them; a Wine release routinely does. Refusing to
-start over an unmeasured rekordbox would be stopping you from DJing to satisfy
-a paperwork gap. The one cross-version measurement there is supports this: on
-2026-08-18 the audio-engine numbers on 7.2.18 matched 7.2.17 to two decimal
-places.
+A Wine upgrade requires a rebuild. The patched components are compiled against
+Wine's internal interfaces, which change between releases.
 
-If a new version works for you, `upstream/supported-rekordbox.txt` is a one-line
-contribution. If something regressed, that is worth an issue — **this axis
-cannot be tested in CI**: rekordbox is proprietary, the installer is 660 MB
-behind a JavaScript download page, and signing in needs a real AlphaTheta
-account. It is human-measured by construction, which is why it is written down
-rather than remembered.
-
-### When your distribution upgrades Wine
-
-This is the one update that costs you something, and it is worth understanding
-because getting it wrong looks exactly like the software randomly breaking.
-
-Four of the fixes are Wine's own unix libraries and two are PE drivers. They are
-compiled against Wine's **internals**, which are not a stable interface — Wine
-changes them freely between releases. A library built for one Wine is not valid
-for the next one. When Arch went 11.15 → 11.16, our `winex11.so` answered
-OpenGL driver interface **38** to an `opengl32` that wanted **39**, so there was
-no OpenGL, so rekordbox could not render, so it did not open.
-
-What this package now guarantees:
-
-- The patched libraries carry the Wine version they were built for
-  (`winedll/.built-for-wine`), and the private tree records both that and the
-  Wine it was assembled against. Before, the tree recorded only the system Wine
-  — a stamp that said "fine" no matter what was inside it.
-- `rekordbox-wine` **refuses to launch** on a mismatch and prints the rebuild
-  command. It used to print the failure and start anyway, which turned a legible
-  error into a mystery.
-- Rebuilding is one command and no root:
-
-  ```sh
-  /usr/share/rekordbox-wine/bin/build-patched-dlls.sh   # 20–30 min
-  /usr/share/rekordbox-wine/bin/make-private-wine.sh
-  ```
-
-  If the new Wine is not in `upstream/patches/supported-wine.txt` it will ask
-  you to confirm with `RBW_ALLOW_UNTESTED_WINE=1`. That is a speed bump, not a
-  wall — trying a new Wine is how the list grows.
-
-- Or hold Wine where it works, which is a legitimate answer for a machine you
-  perform on:
-
-  ```
-  # /etc/pacman.conf
-  IgnorePkg = wine-staging
-  ```
-
-The full account is `docs/investigation/THEMES/T14-wine-upgrade-regression.md`.
-
-### Prebuilt packages, and how breakage gets found before you do
-
-`.github/workflows/` builds this package against **whatever wine-staging Arch
-ships today**, on every push and once a day, and verifies the markers in the
-files that actually ended up inside the package. A Wine release that breaks the
-patch series becomes a red pipeline naming the failing patch, instead of
-becoming somebody's dead set.
-
-- **`build.yml`** — daily and per-push build + marker verification. Attaches the
-  `.pkg.tar.zst` as a workflow artifact.
-- **`wine-watch.yml`** — asks Arch daily what wine-staging is, and keeps one
-  issue open while it is ahead of `supported-wine.txt`.
-- **`release.yml`** — on a `v*` tag, publishes an installable package to GitHub
-  Releases. **Every asset names the Wine it is bound to**, because that is the
-  only thing that makes a binary safe to hand someone.
-- **`aur.yml`** — manual dispatch only, and only if an `AUR_SSH_KEY` secret
-  exists. Publishing here is opt-in for the reason at the top of this file.
-
-To install a prebuilt package instead of compiling:
+The launcher **refuses to start** on a mismatch and prints the commands:
 
 ```sh
-wine --version                       # note the version
-# download the asset whose name matches it, from the Releases page
-sudo pacman -U rekordbox-wine-git-*-wine<version>.pkg.tar.zst
+/usr/share/rekordbox-wine/bin/build-patched-dlls.sh   # 20–30 min, no root
+/usr/share/rekordbox-wine/bin/make-private-wine.sh
 ```
 
-If no published asset matches your Wine, build from source — that path compiles
-against the Wine you actually have and is always correct.
+Or install a release built for your Wine, or hold Wine back:
 
-### It does not touch your system Wine
+```
+# /etc/pacman.conf
+IgnorePkg = wine-staging
+```
 
-Six of the fixes are unix libraries and drivers that Wine cannot override
-per-prefix. Rather than overwrite files owned by your distribution's `wine`
-package — which would be a file conflict, would be undone by every Wine
-upgrade, and would change the behaviour of **every other Wine application on
-your machine** — rekordbox-wine builds a private Wine tree on first run: about
-16 MB of symlinks into your system Wine, plus the six patched files.
+Untested Wine versions need `RBW_ALLOW_UNTESTED_WINE=1` to build. Tested versions
+are listed in [`upstream/patches/supported-wine.txt`](upstream/patches/supported-wine.txt).
 
-Everything else on your machine keeps using your distribution's Wine, unchanged.
-You can prove it at any time:
+**The two version lists behave differently.** An unlisted Wine cannot load, so
+the launcher refuses. An unlisted rekordbox is only unmeasured, so it warns.
+
+## What works
+
+Every claim has a run id in [`docs/GOLD-STATUS.md`](docs/GOLD-STATUS.md).
+
+- Renders and repaints. Stock Wine paints one frame and freezes.
+- Library, waveforms, analysis, two decks at 1.00× real time.
+- DDJ-400 exclusive-mode audio at 44100 Hz; jog wheels and LEDs.
+- PC MASTER OUT with zero stream teardowns over 465 s.
+- File menu and the view-mode selector that gates EXPORT mode.
+- USB export, with `export.pdb` validated outside Wine.
+
+Measured on wine-staging 11.15 with rekordbox 7.2.17/7.2.18. On 11.16 only
+"launches and repaints" has been re-measured.
+
+## What is not proven
+
+- **No exported stick has been read by a real CDJ.** `bin/pdbcheck.py` validates
+  the database structurally.
+- **No full DDJ-400 performance pass** — pad modes, FX, filters, crossfader
+  curve, headphone cue, hot cues.
+- Latency is 512 samples (11.6 ms), the same as a DDJ-400 on Windows. Lower costs
+  about one stream teardown every 330 s, because `AvSetMmThreadCharacteristics`
+  is a stub in Wine.
+
+## System impact
+
+Six fixes are unix libraries and drivers that Wine cannot override per-prefix.
+Instead of overwriting files owned by your `wine` package, the launcher builds a
+private Wine tree on first run: ~16 MB of symlinks plus the six patched files.
+Other Wine applications are unaffected.
 
 ```sh
 /usr/share/rekordbox-wine/bin/verifyloaded.sh          # what rekordbox mapped
 /usr/share/rekordbox-wine/bin/verifyloaded.sh <pid>    # any other Wine app
 ```
 
-That reads `/proc/<pid>/maps`, so it reports what the running process actually
-loaded rather than what is on disk. See [`docs/investigation/THEMES/T13`](docs/investigation/THEMES/) for why that
-distinction cost a day.
+Reads `/proc/<pid>/maps`, so it reports what a process loaded rather than what is
+on disk.
 
-To uninstall completely, remove the package and delete
-`~/.local/share/rekordbox-wine`. Nothing outside it was ever modified.
+To remove: uninstall the package and delete `~/.local/share/rekordbox-wine`.
 
-## Where this is written down publicly
+## Wine defects found
 
-`docs/PUBLISHING.md` is the honest ledger: this repository — README,
-`docs/GOLD-STATUS.md`, Releases, and the patches themselves — is the only thing
-published so far. The WineHQ Bugzilla reports, the WirePlumber report and the
-two AppDB submissions are **written and unfiled**; each needs an account and a
-human, and `docs/PUBLISHING.md` says exactly which and why.
-
-That matters most for one of them: `IDXGIOutput::WaitForVBlank` is an
-`E_NOTIMPL` stub in Wine, and without it **no JUCE 8 application paints a second
-frame**. Until that is filed, every other person hitting it starts from zero.
-
-## What works
-
-Measured, with a run id behind every claim in
-[`docs/GOLD-STATUS.md`](docs/GOLD-STATUS.md):
-
-- The application renders and repaints. **Stock Wine paints one frame and
-  freezes** — this is why nobody had reported rekordbox 7.2.x running at all.
-- Library, waveforms, analysis, and two decks playing at once at 1.00× real time.
-- DDJ-400 exclusive-mode audio at 44100 Hz, and the jog wheels and LEDs.
-- **PC MASTER OUT** with zero stream teardowns over 465 s of continuous play.
-- The File menu, and the view-mode selector that gates EXPORT mode.
-- USB export, with the resulting `export.pdb` validated outside Wine.
-
-## What is not proven
-
-Stated plainly, because a DJ turning up to a gig deserves to know which edges
-have been tested:
-
-- **No exported stick has been read by a real CDJ.** `bin/pdbcheck.py` validates
-  the database structurally; that is a gate, not a finish line.
-- **The DDJ-400 has never been through a full performance pass** — every pad
-  mode, the FX section, filters, crossfader curve, headphone cue, hot cues.
-- Latency is 512 samples (11.6 ms), which is what a DDJ-400 user runs on
-  Windows too. Going lower costs roughly one stream teardown every 330 s,
-  because `AvSetMmThreadCharacteristics` is still a stub in Wine and no audio
-  thread gets real-time priority.
-
-## What was actually wrong with Wine
-
-Twelve defects, ten fixed. The patches are in [`upstream/patches/`](upstream/patches/) and are
-meant to go upstream — that is the point of the exercise.
+Twelve, ten fixed. Patches in [`upstream/patches/`](upstream/patches/).
 
 | # | component | defect |
 |---|---|---|
 | 1 | `dxgi` | `IDXGIOutput::WaitForVBlank` unimplemented — any JUCE 8 application paints one frame and freezes |
-| 2 | `mmdevapi` | event-driven exclusive streams refused outright — no DJ controller usable at all |
-| 3 | `winealsa` | the exclusive-mode event is signalled even when no period is free — 343 buffer refusals in 344 periods |
+| 2 | `mmdevapi` | event-driven exclusive streams refused outright — no DJ controller usable |
+| 3 | `winealsa` | exclusive-mode event signalled with no period free — 343 buffer refusals in 344 periods |
 | 4 | `winealsa` | SysEx split across two USB transfers — the DDJ-400 never authenticates |
-| 5 | `winex11` | popup menus are handed to the window manager, which places them offscreen — no File menu, no EXPORT mode |
-| 6 | `mountmgr` | a removable drive with unknown media type is reported as no media |
-| 7 | `mountmgr` | `StorageDeviceProperty` is faked: every device claims fixed media on a SCSI bus |
-| 8 | `setupapi` | `SPDRP_PHYSICAL_DEVICE_OBJECT_NAME` is a NULL placeholder, so a device cannot be matched to a drive letter |
-| 9 | `mountmgr` | no `STORAGE\Volume` device node is ever written, so SetupAPI enumerates no volumes at all |
-| 10 | `wineusb` | no `\\.\HCDn` device object exists, so rekordbox's USB validation fails and it discards the controller it just detected |
-| 11 | `avrt` | `AvSetMmThreadCharacteristics` is a stub — **won't fix**, measured: granting real-time priority is fatal while the audio thread polls |
+| 5 | `winex11` | popup menus handed to the window manager, which places them offscreen — no File menu, no EXPORT mode |
+| 6 | `mountmgr` | removable drive with unknown media type reported as no media |
+| 7 | `mountmgr` | `StorageDeviceProperty` faked: every device claims fixed media on a SCSI bus |
+| 8 | `setupapi` | `SPDRP_PHYSICAL_DEVICE_OBJECT_NAME` is a NULL placeholder — a device cannot be matched to a drive letter |
+| 9 | `mountmgr` | no `STORAGE\Volume` device node written, so SetupAPI enumerates no volumes |
+| 10 | `wineusb` | no `\\.\HCDn` device object, so rekordbox's USB validation fails and it discards the controller |
+| 11 | `avrt` | `AvSetMmThreadCharacteristics` is a stub — **won't fix**: granting real-time priority is fatal while the audio thread polls |
 | 12 | `mmdevapi` | `RegisterAudioSessionNotification` returns `S_OK` and never calls back — **reported** |
 
-And one defect that was ours, written up in
-[`upstream/reports/NOTES-mmdevapi-buffer-widening.md`](upstream/): patch 2 widened the
-exclusive buffer to four periods, rekordbox reads that back through
-`GetBufferSize()` and uses it as its audio block size, and that single factor of
-four broke PC MASTER OUT for five days. *Widening a client's buffer is not
-invisible to the client.*
+One defect was ours: patch 2 widened the exclusive buffer to four periods,
+rekordbox read that back via `GetBufferSize()` and used it as its audio block
+size. Written up in
+[`upstream/reports/NOTES-mmdevapi-buffer-widening.md`](upstream/reports/NOTES-mmdevapi-buffer-widening.md).
 
-## How this was found
+## CI
 
-The investigation is deliberately reproducible, because it outlived many
-sessions:
+- **`build.yml`** — builds the package daily and per push against Arch's current
+  wine-staging, and verifies the patch markers inside the built package.
+- **`wine-watch.yml`** — checks Arch's wine-staging version daily and opens an
+  issue when it is ahead of `supported-wine.txt`.
+- **`release.yml`** — publishes a package per `v*` tag, Wine version in the asset
+  name.
+- **`aur.yml`** — manual dispatch, gated on a secret.
+
+The rekordbox axis cannot be tested in CI: proprietary, 660 MB installer behind a
+JavaScript download page, sign-in needs a real account.
+
+## Documentation status
+
+This repository is the only thing published. The WineHQ Bugzilla reports, the
+WirePlumber report and the two AppDB submissions are written and **unfiled** —
+[`docs/PUBLISHING.md`](docs/PUBLISHING.md) lists what each needs.
+
+The `WaitForVBlank` report matters most: without that fix no JUCE 8 application
+paints a second frame.
+
+## Investigation
 
 | | |
 |---|---|
-| [`docs/investigation/STATE.md`](docs/investigation/STATE.md) | current hypothesis and the single next action |
+| [`docs/investigation/STATE.md`](docs/investigation/STATE.md) | current hypothesis and next action |
 | [`docs/investigation/JOURNAL.md`](docs/investigation/JOURNAL.md) | append-only timeline |
-| [`docs/investigation/THEMES/`](docs/investigation/THEMES/) | one file per investigation theme, each with its root-cause analysis |
-| [`docs/GOLD-STATUS.md`](docs/GOLD-STATUS.md) | every capability, its state, and the evidence |
-| [`docs/REMAINING-STEPS-TO-GOLD.md`](docs/REMAINING-STEPS-TO-GOLD.md) | what is left, who can do it, and how we would know |
+| [`docs/investigation/THEMES/`](docs/investigation/THEMES/) | one file per theme, each with root-cause analysis |
+| [`docs/GOLD-STATUS.md`](docs/GOLD-STATUS.md) | every capability, its state, the evidence |
+| [`docs/REMAINING-STEPS-TO-GOLD.md`](docs/REMAINING-STEPS-TO-GOLD.md) | what is left and who can do it |
 | [`docs/PACKAGE.md`](docs/PACKAGE.md) | what the package installs and why |
-| [`docs/REGRESSION.md`](docs/REGRESSION.md) | the tests that must pass before a release |
-| `runs/` | per-run evidence: manifest, log, screenshots, verdict |
+| [`docs/REGRESSION.md`](docs/REGRESSION.md) | tests that must pass before a release |
 
-`bin/rbw` is the harness. Run it with no arguments for the commands.
+`bin/rbw` is the harness; run it with no arguments for the commands.
 
-The technique that broke the hardest bug open, after DWARF unwinding gave
-nothing and gdb crashed the application three times out of three, was
-**LBR call-graph profiling** — `perf record -e cycles:u --call-graph lbr` needs
-no unwind information at all — combined with **hardware execute breakpoints**
-(`perf record -e mem:<addr>:x`) to count how often a specific instruction in a
-stripped 100 MB binary actually ran. See [`docs/investigation/THEMES/T10`](docs/investigation/THEMES/).
+The hardest bug was broken open with **LBR call-graph profiling**
+(`perf record -e cycles:u --call-graph lbr`, which needs no unwind information)
+plus **hardware execute breakpoints** (`perf record -e mem:<addr>:x`) to count
+how often one instruction in a stripped 100 MB binary ran. See
+[`docs/investigation/THEMES/`](docs/investigation/THEMES/) T10.
 
 ## Licence
 
-The Wine patches are LGPL-2.1-or-later, matching Wine. The harness and launcher
-scripts are MIT.
+Wine patches LGPL-2.1-or-later, matching Wine. Harness and launcher scripts MIT.

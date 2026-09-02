@@ -1,13 +1,9 @@
 # What has actually been published, and what has not
 
-**Status: 2026-09-02. Honest answer — the GitHub repository is the only thing
-published. Every upstream and AppDB report is written and none is filed.**
+**Status 2026-09-02: the GitHub repository is the only thing published. Every
+upstream and AppDB report is written and none is filed.**
 
-This document exists because "we documented it" and "the world can find it" are
-different claims, and this project had been quietly making the first while
-sounding like the second.
-
-## Published, and reachable by a user who has never met this repository
+## Published
 
 | where | what it says | current? |
 |---|---|---|
@@ -17,15 +13,12 @@ sounding like the second.
 | GitHub **Actions** | daily build against Arch's current Wine; the failing patch is named in the log | live |
 | `upstream/patches/*.patch` | the Wine fixes themselves, in the repo and in the package under `/usr/share/doc/rekordbox-wine/patches` | yes |
 
-That is genuinely useful to somebody who finds the repository. It is invisible
-to everybody who does not — which, for a Linux DJ searching "rekordbox linux",
-is almost everybody.
+Reachable only by someone who finds the repository.
 
-## Written, NOT published — and each is a deliverable
+## Written, not filed
 
-These are complete drafts sitting in `upstream/reports/`. Every one needs a
-human with an account; none can be automated, and two are actively blocked from
-automation by design.
+Complete drafts in `upstream/reports/`. Each needs an account; none can be
+automated.
 
 | draft | needs | why it matters |
 |---|---|---|
@@ -35,36 +28,27 @@ automation by design.
 | `wireplumber-alsa-node-error-handler.md` | a WirePlumber issue tracker account | WirePlumber 0.5.15's ALSA error handler crashes on its own error message, deleting a device from PipeWire for the rest of the session. Reproduced **Wine-free**, so it is not our bug to carry. |
 | `appdb-rekordbox-7217.md` | a logged-in AppDB account | Two submissions: a test report, and **a correction to iId=43369**, whose "accepts no keystrokes" diagnosis this project disproved. Until it is filed, AppDB's public record of rekordbox 7.2.x is two "Garbage" reports and nothing else. |
 
-### The AppDB draft is now stale in one specific way
+### The AppDB draft is stale
 
-It is written for **rekordbox 7.2.17 on wine-staging 11.15**. The project has
-since moved to **11.16**, and on 11.16 only "launches and repaints" has been
-re-measured. Filing it as-is would be accurate about what it claims and would
-describe a stack nobody is running. Either re-measure on 11.16 first, or file it
-with the versions it actually names and add a second report later. Do not
-silently retarget the version numbers on a report whose measurements were made
-elsewhere.
+Written for **rekordbox 7.2.17 on wine-staging 11.15**. The project is now on
+11.16, where only "launches and repaints" has been re-measured. Either re-measure
+on 11.16 first, or file it with the versions it names and add a second report.
+Do not retarget the version numbers — the measurements behind them were made on
+11.15.
 
-## Why none of this is automated
+## Why filing is not automated
 
-Filing is deliberately a human act here:
+- **Bugzilla** sits behind Anubis, which exists to stop automated submissions.
+- **AppDB** needs a logged-in account and a judgement about rating.
+- Both put a name against a claim.
 
-- **Bugzilla** sits behind Anubis specifically to stop automated submissions.
-- **AppDB** needs a logged-in account and a human judgement about rating.
-- Both put a **name** against a claim. This project's rule is that every claim
-  cites a run id; a report filed by a harness has nobody standing behind it.
+The drafts are done. What remains is an account and about an hour.
 
-The drafts are the part that can be prepared without an account, and they are
-done. What remains is an account and about an hour.
+## What CI cannot cover
 
-## The one axis CI cannot cover
-
-`.github/workflows/` watches Wine, because Arch publishes Wine versions in a
-JSON API and the package can be built in a container. **It cannot watch
-rekordbox**: proprietary, a 660 MB installer behind a JavaScript download page,
-and sign-in needs a real AlphaTheta account. So the rekordbox axis is measured
-by a human and recorded in `upstream/supported-rekordbox.txt`, and the launcher
-warns rather than refuses on a version that is not in it.
-
-If that file is ever out of date, the failure mode is a warning a user can act
-on, not a broken install — which is the right way round.
+CI watches Wine: Arch publishes versions in a JSON API and the package builds in
+a container. It cannot watch rekordbox — proprietary, a 660 MB installer behind
+a JavaScript download page, sign-in needs a real account. That axis is measured
+by hand and recorded in `upstream/supported-rekordbox.txt`; the launcher warns
+rather than refuses on an unlisted version, so a stale file costs a warning
+rather than a broken install.
