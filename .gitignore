@@ -18,3 +18,12 @@ bin/damagefps
 
 # per-run evidence from bin/rbtest.sh
 runs/RBTEST/
+
+# makepkg's working directories and output, left in packaging/ by `makepkg -si`.
+# makepkg also REWRITES pkgver= in the PKGBUILD from pkgver(), so a build in a
+# checkout dirties a tracked file; `git checkout packaging/PKGBUILD` undoes it.
+packaging/src/
+packaging/pkg/
+packaging/rekordbox-wine/
+packaging/*.pkg.tar.zst
+packaging/*.pkg.tar.zst.sig
