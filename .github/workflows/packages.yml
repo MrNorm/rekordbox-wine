@@ -92,14 +92,16 @@ jobs:
           # dpkg-buildpackage requires debian/ at the source root, and without
           # that step it stops at "cannot open file debian/changelog", which is
           # exactly how this packaging sat unbuilt.
-          packaging/build-deb.sh
+          # Into dist/ inside the workspace: upload-artifact rejects any path
+          # containing '..', and dpkg writes beside the source tree by default.
+          packaging/build-deb.sh dist
 
       - name: The .deb must contain the patches
         # Same claim as the Arch job: markers in the files that ended up inside
         # the package, not in the build tree.
         run: |
           set -euo pipefail
-          deb="$(ls ../rekordbox-wine_*.deb | head -1)"
+          deb="$(ls dist/rekordbox-wine_*.deb | head -1)"
           echo "inspecting $deb"
           mkdir -p /tmp/x && dpkg-deb -x "$deb" /tmp/x
           ver='${{ steps.wine.outputs.version }}'
@@ -131,7 +133,7 @@ jobs:
         # Installing for real is the only way that gets caught.
         run: |
           set -euo pipefail
-          apt-get install -y -qq ../rekordbox-wine_*.deb
+          apt-get install -y -qq ./dist/rekordbox-wine_*.deb
           useradd -m tester
           out=$(runuser -u tester -- rekordbox-wine --check 2>&1 || true)
           echo "$out"
@@ -142,7 +144,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rekordbox-wine-deb-wine${{ steps.wine.outputs.version }}
-          path: ../rekordbox-wine_*.deb
+          path: dist/rekordbox-wine_*.deb
           if-no-files-found: error
 
   rpm:
@@ -177,12 +179,12 @@ jobs:
         run: |
           set -euo pipefail
           git config --global --add safe.directory "$PWD"
-          packaging/build-rpm.sh
+          packaging/build-rpm.sh dist
 
       - name: The .rpm must contain the patches
         run: |
           set -euo pipefail
-          rpm_file="$(find ~/rpmbuild/RPMS -name 'rekordbox-wine-*.rpm' | head -1)"
+          rpm_file="$(ls dist/rekordbox-wine-*.rpm | head -1)"
           echo "inspecting $rpm_file"
           mkdir -p /tmp/x && (cd /tmp/x && rpm2cpio "$rpm_file" | cpio -idm --quiet)
           ver='${{ steps.wine.outputs.version }}'
@@ -203,7 +205,7 @@ jobs:
       - name: Install it, and run the launcher's checker
         run: |
           set -euo pipefail
-          dnf -y install "$(find ~/rpmbuild/RPMS -name 'rekordbox-wine-*.rpm' | head -1)"
+          dnf -y install "$(ls dist/rekordbox-wine-*.rpm | head -1)"
           useradd -m tester
           out=$(runuser -u tester -- rekordbox-wine --check 2>&1 || true)
           echo "$out"
@@ -213,5 +215,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: rekordbox-wine-rpm-wine${{ steps.wine.outputs.version }}
-          path: ~/rpmbuild/RPMS/**/*.rpm
+          path: dist/*.rpm
           if-no-files-found: error
