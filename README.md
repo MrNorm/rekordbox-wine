@@ -18,7 +18,7 @@ Decks and mixer, rekordbox 7.2.18 on wine-staging 11.16. On stock Wine this
 window paints one frame and freezes.
 
 **Contents:** [Requirements](#requirements) · [Install](#install) ·
-[First run](#first-run) · [DDJ-400 setup](#ddj-400-setup) ·
+[Installing rekordbox](#installing-rekordbox-itself) · [DDJ-400 setup](#ddj-400-setup) ·
 [Troubleshooting](#troubleshooting) · [Keeping it working](#keeping-it-working) ·
 [What works](#what-works) · [What is not proven](#what-is-not-proven)
 
@@ -78,14 +78,10 @@ project distributes from GitHub instead.
 `packaging/debian/` and `packaging/rekordbox-wine.spec` are complete and produce
 the same payload, but neither has been built on its own distribution.
 
-## First run
+## Installing rekordbox itself
 
-```sh
-rekordbox-wine --install     # downloads the latest rekordbox, then installs it
-rekordbox-wine
-```
-
-Neither needs root. The installer shows one language dialog — press Return.
+Neither command needs root. The rekordbox installer shows one language dialog —
+press Return.
 
 | command | behaviour |
 |---|---|
