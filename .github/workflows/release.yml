@@ -55,6 +55,23 @@ jobs:
           echo "wine=$(wine --version | sed 's/^wine-//;s/ .*//')" >> "$GITHUB_OUTPUT"
           echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
 
+      - name: Point the PKGBUILD at the tagged commit
+        # packaging/PKGBUILD is a VCS PKGBUILD: `source=(git+https://…)` makes
+        # makepkg clone the repository afresh and build its DEFAULT BRANCH,
+        # which is NOT the tag that triggered this run. Measured: retriggering
+        # the v0.2.1 and v0.2.2 releases produced identical packages, both
+        # stamped r16.g479842b -- master at that moment -- rather than the eight
+        # and twelve-commit trees the tags name. A release that does not contain
+        # the code it is named after is worse than no release.
+        #
+        # Build from THIS checkout, pinned to the tag, so the package is the tag.
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$PWD"
+          tag='${{ steps.id.outputs.tag }}'
+          sed -i "s|^source=(\"rekordbox-wine::git+\$url.git\")|source=(\"rekordbox-wine::git+file://$PWD#tag=$tag\")|" packaging/PKGBUILD
+          grep -n '^source=' packaging/PKGBUILD
+
       - name: Build the package
         env:
           RBW_ALLOW_UNTESTED_WINE: '1'
@@ -63,8 +80,21 @@ jobs:
           useradd -m builder
           chown -R builder:builder .
           echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          sudo -u builder git config --global --add safe.directory "$PWD"
           sudo -u builder --preserve-env=RBW_ALLOW_UNTESTED_WINE \
             bash -c 'cd packaging && makepkg -s --noconfirm --noprogressbar'
+
+      - name: The built package must name the tagged commit
+        # The whole point of the step above, checked rather than assumed.
+        run: |
+          set -euo pipefail
+          want="$(git rev-parse --short '${{ steps.id.outputs.tag }}^{commit}')"
+          pkg="$(ls packaging/*.pkg.tar.zst | head -1)"
+          echo "package: $(basename "$pkg")"
+          case "$(basename "$pkg")" in
+            *".g$want-"*) echo "ok — built from $want" ;;
+            *) echo "::error::package does not name the tagged commit $want"; exit 1 ;;
+          esac
 
       - name: Name the assets after the Wine they are bound to, and checksum them
         id: assets

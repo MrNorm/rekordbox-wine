@@ -9,9 +9,8 @@ Runs **rekordbox 7.2.x** on Linux with a **Pioneer DDJ-400**, including
 
 Ten Wine patches and a launcher that applies and verifies them.
 
-> **rekordbox is not included.** Download it from
-> [rekordbox.com](https://rekordbox.com) and sign in with your own AlphaTheta
-> account.
+> **rekordbox is not included** — it is proprietary. The launcher downloads it
+> from rekordbox.com for you; you sign in with your own AlphaTheta account.
 
 ![rekordbox decks and mixer running under Wine](docs/images/decks-mixer.png)
 
@@ -36,26 +35,30 @@ window paints one frame and freezes.
 
 ## Install
 
-### Prebuilt package
+Arch, one line:
 
 ```sh
-wine --version    # note the version
+curl -fsSL https://raw.githubusercontent.com/MrNorm/rekordbox-wine/master/bin/install.sh | bash
 ```
 
-Download the asset from [Releases](https://github.com/MrNorm/rekordbox-wine/releases/latest)
-whose name matches that version, then:
+Picks the release built for your wine-staging version, checks it against the
+release's `SHA256SUMS`, and installs it. If no build matches your Wine it stops
+and tells you, rather than installing something that cannot work.
+
+Then:
 
 ```sh
-sudo pacman -U rekordbox-wine-git-*-wine11.16.pkg.tar.zst
+rekordbox-wine --install     # downloads rekordbox and installs it
+rekordbox-wine               # launch
 ```
 
-Assets are named for the Wine they were built against. The patched libraries are
-compiled against Wine internals and work with that version only. If no asset
-matches your Wine, build from source.
+Prefer to read it first? `bin/install.sh` is in this repository — download it,
+read it, run it.
 
-### From source
+### Build from source
 
-Compiles the Wine components against the Wine you have. Takes 20–30 minutes.
+Compiles the Wine components against the Wine you have. 20–30 minutes. Needed if
+no release matches your Wine.
 
 ```sh
 git clone https://github.com/MrNorm/rekordbox-wine.git
@@ -66,13 +69,11 @@ makepkg -si
 The package version records the commit it was built from
 (`0.2.0.r<commits>.g<short-sha>`). To update: `git pull`, then `makepkg -si`.
 
-`paru` installs from AUR or from package files, not from a local PKGBUILD
+`paru` installs from AUR or from package *files*, not from a local PKGBUILD
 directory, so hand it the result: `paru -U rekordbox-wine-git-*.pkg.tar.zst`.
 
 **Not on the AUR.** AUR pushes have been blocked over malware injection; this
 project distributes from GitHub instead.
-
-### Other distributions
 
 `packaging/debian/` and `packaging/rekordbox-wine.spec` are complete and produce
 the same payload, but neither has been built on its own distribution.

@@ -37,6 +37,8 @@ install -Dm755 bin/rbclean.sh                     "$share/bin/rbclean.sh"
 # Finds and downloads the latest rekordbox installer from rekordbox.com, which
 # is what `rekordbox-wine --install` with no argument calls.
 install -Dm755 bin/fetch-rekordbox.sh             "$share/bin/fetch-rekordbox.sh"
+# The one-line installer, shipped so an installed copy can be inspected offline.
+install -Dm755 bin/install.sh                     "$share/bin/install.sh"
 install -Dm755 bin/pdbcheck.py                    "$share/bin/pdbcheck.py"
 
 # PE builtins, overridden per-prefix by the launcher.
