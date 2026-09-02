@@ -60,8 +60,20 @@ just written.**
   wine-staging is in `[extra]` and multilib only holds its `lib32-*` deps. Found
   by running it.
 
-The installed package here is now `rekordbox-wine-git 0.2.0.r8.gb056eb4-1`,
-which replaced `rekordbox-wine 0.2.0-1` (the two conflict by name).
+The installed package here is now `rekordbox-wine-git 0.2.0.r12.gdbe14d8-1`
+(**v0.2.2**, downloaded from the release, `sha256sum -c` OK, `pacman -U`), which
+replaced `rekordbox-wine 0.2.0-1` (the two conflict by name). Launching from it
+reports `ok rekordbox 7.2.18 — measured` and `verifyloaded` is green.
+
+**Two version axes now, and they behave oppositely on purpose** —
+`upstream/patches/supported-wine.txt` makes the launcher **refuse** (an unlisted
+Wine cannot load), `upstream/supported-rekordbox.txt` makes it **warn and
+start** (an unlisted rekordbox is only unmeasured). Do not "tidy" these into the
+same behaviour.
+
+**What is published, and what is not:** `docs/PUBLISHING.md`. All six upstream
+drafts are written and **unfiled** — that is the largest remaining deliverable
+that needs no measurement, only an account and an hour.
 
 **How to publish from here.** `origin/master` is a curated 6-commit history
 whose tree matched local `389ee04`. Publish by committing onto a `publish`
