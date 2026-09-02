@@ -28,6 +28,16 @@ on:
 permissions:
   contents: write   # creating the release and uploading assets
 
+# Every `run:` here is bash. GitHub defaults to `sh`, and these scripts use
+# `[[ ]]`, arrays and `${var//}` -- bashisms all. That passed on Arch and Fedora
+# only because their /bin/sh IS bash; on Debian it is dash, and the marker
+# checks failed with "[[: not found" and then reported every file as MISSING
+# FROM THE PACKAGE. A verification step that reports absence when it cannot
+# parse itself is worse than no verification.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   release:
     runs-on: ubuntu-latest
