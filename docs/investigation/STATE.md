@@ -42,14 +42,26 @@ whatever wine-staging Arch ships, markers verified inside the built package),
 issue open), `release.yml` (installable package per `v*` tag, Wine version in
 every asset name), `aur.yml` (manual dispatch, gated on a secret).
 
-**Shipped and verified end to end on 2026-09-02.** CI pushed and green on the
-first run (`gh run 33636900807`): built the package against Arch's 11.16,
-verified all eleven markers **inside** the built package, checked
-`.built-for-wine = 11.16`, installed it and ran the launcher's own `--check`.
-Locally, `makepkg` from the pushed GitHub source produced
-`rekordbox-wine-git-0.2.0.r7.ga8cd0da-1`, which replaced the old
-`rekordbox-wine 0.2.0-1`; launching through `/usr/bin/rekordbox-wine` brings
-rekordbox up with `verifyloaded` green. Tag `v0.2.1` published.
+**Shipped and verified end to end on 2026-09-02 — the pipeline was run, not
+just written.**
+
+- `build` green on its **first** run (`33636900807`, 2m46s, and again
+  `33637937263`): built the package against Arch's 11.16, verified all eleven
+  markers **inside the built package**, checked `.built-for-wine = 11.16`, then
+  installed it and ran the launcher's own `--check`.
+- `release` (`33637600574`) published **v0.2.1** with the Wine version in the
+  asset name: `rekordbox-wine-git-0.2.0.r8.gb056eb4-1-x86_64-wine11.16.pkg.tar.zst`
+  and `SHA256SUMS`.
+- **The pull-and-install path was then tested for real** — `gh release
+  download`, `sha256sum -c` OK, `pacman -U`, launch: no FAIL lines at all,
+  `verifyloaded` green, main window 1920×1006 with the full UI.
+- `wine-watch` (`33637949630`) green: *found wine-staging in [extra] … 11.16 …
+  recorded as measured*. It first 404'd because the job asked `[multilib]`;
+  wine-staging is in `[extra]` and multilib only holds its `lib32-*` deps. Found
+  by running it.
+
+The installed package here is now `rekordbox-wine-git 0.2.0.r8.gb056eb4-1`,
+which replaced `rekordbox-wine 0.2.0-1` (the two conflict by name).
 
 **How to publish from here.** `origin/master` is a curated 6-commit history
 whose tree matched local `389ee04`. Publish by committing onto a `publish`
