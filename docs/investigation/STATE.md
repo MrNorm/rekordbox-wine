@@ -42,20 +42,31 @@ whatever wine-staging Arch ships, markers verified inside the built package),
 issue open), `release.yml` (installable package per `v*` tag, Wine version in
 every asset name), `aur.yml` (manual dispatch, gated on a secret).
 
+**Shipped and verified end to end on 2026-09-02.** CI pushed and green on the
+first run (`gh run 33636900807`): built the package against Arch's 11.16,
+verified all eleven markers **inside** the built package, checked
+`.built-for-wine = 11.16`, installed it and ran the launcher's own `--check`.
+Locally, `makepkg` from the pushed GitHub source produced
+`rekordbox-wine-git-0.2.0.r7.ga8cd0da-1`, which replaced the old
+`rekordbox-wine 0.2.0-1`; launching through `/usr/bin/rekordbox-wine` brings
+rekordbox up with `verifyloaded` green. Tag `v0.2.1` published.
+
+**How to publish from here.** `origin/master` is a curated 6-commit history
+whose tree matched local `389ee04`. Publish by committing onto a `publish`
+branch based on `origin/master` and fast-forwarding — never by pushing the
+262-commit local history, which was deliberately not published.
+
 ### Next action
 
-1. **Push the CI to GitHub and watch the first `build` run.** The workflows have
-   never executed. `origin/master` is a curated 6-commit history whose tree is
-   identical to local `389ee04`; publish by fast-forwarding it, never by pushing
-   the 262-commit local history.
-2. **Re-measure audio, USB export and the DDJ-400 on 11.16.** Until then
-   `supported-wine.txt` claims only "applies, builds, launches, repaints", which
-   is all that has been shown.
-3. Then resume the pre-existing next actions below.
+1. **Re-measure audio, PC MASTER OUT, USB export and the DDJ-400 on 11.16.**
+   `supported-wine.txt` currently claims only "applies, builds, launches,
+   repaints", which is all that has been shown. `bin/deckclock.sh` for playback
+   rate; the controller needs hands.
+2. Then resume the pre-existing next actions below.
 
 ### Blocked on
 
-Nothing for (1). (2) needs the controller and a FAT32 stick.
+(1) needs the controller and a FAT32 stick.
 
 ---
 

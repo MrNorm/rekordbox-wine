@@ -15,10 +15,30 @@ Pioneer DDJ-400.
 
 ---
 
+## Wine version, and the system changes made on 2026-09-02
+
+**The whole table below was measured on wine-staging 11.15. On 2026-09-02 the
+project moved to 11.16 and only two of those rows have been re-measured there
+(the window renders, and it repaints). Everything else on 11.16 is unproven.**
+
+Arch upgraded wine-staging 11.15 → 11.16 on 2026-08-27, which broke the install
+silently — see `docs/investigation/THEMES/T14-wine-upgrade-regression.md`. The
+patch series is now rebased onto 11.16 and does **not** apply to 11.15.
+
+System-level changes made this session, with their reversals:
+
+| change | reversal |
+|---|---|
+| replaced package `rekordbox-wine 0.2.0-1` with `rekordbox-wine-git 0.2.0.r7.ga8cd0da-1` | `sudo pacman -R rekordbox-wine-git` then reinstall the old package file |
+| rebuilt `~/.local/share/rekordbox-wine/wine` against 11.16 | `bin/make-private-wine.sh` after checking out the series for your Wine |
+| `prefixes/rb7` system32 dxgi/mmdevapi/setupapi replaced with 11.16 builds | the launcher rewrites them on every start; previous copies are in `artifacts/removed-from-prefix/` |
+
+No `sudo` beyond the package swap; no udev, modprobe or kernel changes.
+
 ## Status at a glance
 
-**Refreshed 2026-08-17 (night).** Every row is a measurement, and the rows that
-changed are marked.
+**Refreshed 2026-08-17 (night); measured on wine-staging 11.15.** Every row is a
+measurement, and the rows that changed are marked.
 
 | capability | state | evidence |
 |---|---|---|
