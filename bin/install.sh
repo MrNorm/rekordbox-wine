@@ -18,13 +18,83 @@ API="https://api.github.com/repos/$REPO/releases/latest"
 die() { printf '\033[31merror\033[0m  %s\n' "$*" >&2; exit 1; }
 say() { printf '\033[32m==>\033[0m %s\n' "$*"; }
 
-command -v curl    >/dev/null || die "curl is required"
-command -v pacman  >/dev/null || die "this installer is for Arch. Other distributions: build from source, see the README."
-command -v wine    >/dev/null || die "wine is not installed. Install wine-staging first: sudo pacman -S wine-staging"
+# ---------------------------------------------------------------- preflight
+#
+# Report EVERYTHING that is wrong, then stop -- rather than dying on the first
+# missing thing, which makes a user fix one problem, re-run, and meet the next.
+# Each failure carries the command that fixes it.
+PASS=$'\033[32m✓\033[0m'; FAILM=$'\033[31m✗\033[0m'; WARNM=$'\033[33m!\033[0m'
+PROBLEMS=0
+declare -a REMEDY=()
+ck()   { printf '  %s %s\n' "$PASS" "$*"; }
+ckno() { printf '  %s %s\n' "$FAILM" "$1"; shift; [[ $# -gt 0 ]] && REMEDY+=("$*"); PROBLEMS=$((PROBLEMS+1)); }
+ckwarn() { printf '  %s %s\n' "$WARNM" "$*"; }
 
-WINE_VER="$(wine --version 2>/dev/null | sed 's/^wine-//;s/ .*//')"
-[[ -n "$WINE_VER" ]] || die "could not read 'wine --version'"
-say "wine $WINE_VER"
+echo "Checking prerequisites"
+
+# Architecture. The patched components are x86_64 PE and unix libraries.
+ARCH="$(uname -m)"
+if [[ "$ARCH" == "x86_64" ]]; then ck "architecture $ARCH"
+else ckno "architecture $ARCH — only x86_64 is built"; fi
+
+# Package manager, and therefore which distribution path applies. Resolved
+# BEFORE anything else that gives advice: telling a Debian user to run
+# `pacman -S curl` is worse than saying nothing.
+DISTRO=""; INSTALL_CMD=""
+if   command -v pacman  >/dev/null; then DISTRO=arch; INSTALL_CMD="sudo pacman -S"
+elif command -v apt-get >/dev/null; then DISTRO=deb;  INSTALL_CMD="sudo apt install"
+elif command -v dnf     >/dev/null; then DISTRO=rpm;  INSTALL_CMD="sudo dnf install"
+elif command -v zypper  >/dev/null; then DISTRO=rpm;  INSTALL_CMD="sudo zypper install"
+fi
+case "$DISTRO" in
+  arch) ck "Arch (pacman)" ;;
+  deb|rpm)
+    ckno "no prebuilt package for this distribution yet" \
+         "Build from source: https://github.com/$REPO#build-from-source" ;;
+  *)
+    ckno "could not identify the package manager" \
+         "Build from source: https://github.com/$REPO#build-from-source" ;;
+esac
+
+WINE_PKG="wine-staging"; [[ "$DISTRO" == deb || "$DISTRO" == rpm ]] && WINE_PKG="winehq-staging"
+
+command -v curl >/dev/null && ck "curl" \
+  || ckno "curl is missing" "${INSTALL_CMD:-install} curl"
+
+if command -v sudo >/dev/null; then ck "sudo"
+else ckno "sudo is missing — installing the package needs root" \
+          "Install sudo, or run the package manager as root yourself"; fi
+
+# Wine, and whether it is a version something was built for.
+WINE_VER=""
+if command -v wine >/dev/null; then
+  WINE_VER="$(wine --version 2>/dev/null | sed 's/^wine-//;s/ .*//')"
+  if [[ -n "$WINE_VER" ]]; then
+    ck "wine $WINE_VER"
+    wine --version 2>/dev/null | grep -qi staging \
+      || ckwarn "this is not wine-staging; every measurement in this project was made on staging"
+  else
+    ckno "'wine --version' produced nothing" "Reinstall Wine: ${INSTALL_CMD:-install} $WINE_PKG"
+  fi
+else
+  ckno "wine is not installed" "${INSTALL_CMD:-install} $WINE_PKG"
+fi
+
+# Disk. The package is small; rekordbox itself is not, and this is the last
+# comfortable moment to say so.
+FREE_MB="$(df -Pm /tmp 2>/dev/null | awk 'NR==2{print $4}')"
+if [[ -n "$FREE_MB" && "$FREE_MB" -lt 200 ]]; then
+  ckno "only ${FREE_MB} MB free on /tmp" "Free some space; the download needs ~200 MB"
+elif [[ -n "$FREE_MB" ]]; then ck "disk space on /tmp (${FREE_MB} MB free)"; fi
+
+if [[ $PROBLEMS -gt 0 ]]; then
+  echo
+  printf '\033[31m%s\033[0m\n' "$PROBLEMS thing(s) need fixing first:"
+  for r in "${REMEDY[@]}"; do printf '  · %s\n' "$r"; done
+  echo
+  exit 1
+fi
+echo
 
 JSON="$(curl -fsSL "$API")" || die "could not reach the GitHub releases API"
 TAG="$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' <<<"$JSON" | head -1)"
