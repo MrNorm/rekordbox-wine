@@ -19,6 +19,7 @@ window paints one frame and freezes.
 
 **Contents:** [Requirements](#requirements) · [Install](#install) ·
 [Installing rekordbox](#installing-rekordbox-itself) · [DDJ-400 setup](#ddj-400-setup) ·
+[USB stick and PRO DJ LINK](#usb-stick-export-and-pro-dj-link) ·
 [Debian and Fedora](#debian-and-fedora) · [Troubleshooting](#troubleshooting) · [Keeping it working](#keeping-it-working) ·
 [What works](#what-works) · [What is not proven](#what-is-not-proven)
 
@@ -31,6 +32,7 @@ window paints one frame and freezes.
 | Wine | **wine-staging**, currently **11.16**. Plain `wine` is untested. |
 | GPU | Tested on Intel Iris Xe. Nvidia and AMD untested here. |
 | Controller | DDJ-400 for the controller and PC MASTER OUT claims. Other hardware untested. |
+| Player | XDJ-XZ — reads back an exported stick in USB mode, and streams over PRO DJ LINK on the router LAN (T02, T15). No other player tested. |
 | Root needed | Only to install the package and replug/reboot for the udev and module rules. |
 
 ## Install
@@ -151,6 +153,42 @@ Two one-off steps that need root or physical access:
 
 `rekordbox-wine --check` reports whether either is outstanding.
 
+## USB stick export and PRO DJ LINK
+
+**Stick.** Two things, both per machine and neither done by the launcher yet.
+
+Read access to the raw block node, from a udev rule. Wine's `mountmgr` opens
+`/dev/sdX1` to read the filesystem, and reports the stick as NTFS when the open
+fails:
+
+```text
+SUBSYSTEM=="block", KERNEL=="sd*", ENV{ID_BUS}=="usb", TAG+="uaccess"
+```
+
+Number it below 73, where systemd acts on the tag.
+
+A drive letter in the prefix, with the raw node next to it — the letter alone is
+not enough, because the filesystem type and the device are both read through the
+node. The letter is arbitrary:
+
+```bash
+ln -s /run/media/you/DATA  "$WINEPREFIX/dosdevices/e:"   # the DOS drive
+ln -s /dev/sda1            "$WINEPREFIX/dosdevices/e::"  # the raw node it is read from
+```
+
+**PRO DJ LINK.** Put the player on the router LAN and allow the LAN subnet
+inbound; the player connects to the computer, not the other way round:
+
+```bash
+firewall-cmd --zone=public --add-rich-rule='rule family="ipv4" source address="192.168.0.0/24" accept' --permanent
+firewall-cmd --reload
+# undo: firewall-cmd --zone=public --remove-rich-rule='rule family="ipv4" source address="192.168.0.0/24" accept' --permanent && firewall-cmd --reload
+```
+
+**Do not cable the player's USB port to the PC at the same time.** That port is
+a USB network bridge, and it adds a second interface on the player's subnet,
+which breaks streaming. `ip -br addr` should show **one** interface on your LAN.
+
 ## Troubleshooting
 
 Run `rekordbox-wine --check` first. It names the problem in most cases.
@@ -164,6 +202,8 @@ Run `rekordbox-wine --check` first. It names the problem in most cases.
 | Sample-rate list empty in Preferences | Audio driver is `winepulse`, which has no exclusive mode | `--check` reports the driver; it must be `alsa` |
 | A sound device vanishes from PipeWire mid-session | WirePlumber 0.5.15 crashes in its own ALSA error handler | `systemctl --user restart wireplumber` |
 | PC MASTER OUT stalls | `WasapiPolling` / `AudioBufferSize` | The launcher seeds both; `--check` verifies them |
+| Stick listed, but "formatted with an unsupported file system" | The filesystem type is read from the raw node; without read access it is misreported as NTFS | [USB stick export](#usb-stick-export-and-pro-dj-link) |
+| PRO DJ LINK: player never sees the computer | Firewall, or the player's USB port cabled to the PC | [PRO DJ LINK](#usb-stick-export-and-pro-dj-link) |
 
 ## Keeping it working
 
@@ -216,15 +256,23 @@ Every claim has a run id in [`docs/GOLD-STATUS.md`](docs/GOLD-STATUS.md).
 - DDJ-400 exclusive-mode audio at 44100 Hz; jog wheels and LEDs.
 - PC MASTER OUT with zero stream teardowns over 465 s.
 - File menu and the view-mode selector that gates EXPORT mode.
-- USB export, with `export.pdb` validated outside Wine.
+- USB export, `export.pdb` checked outside Wine by `bin/pdbcheck.py` — and the
+  stick read back by a real XDJ-XZ in USB mode, waveforms, BPM and key on both
+  decks.
+- PRO DJ LINK to an XDJ-XZ over the router LAN — the player browses the host's
+  library and plays a track (T15).
 
-Measured on wine-staging 11.15 with rekordbox 7.2.17/7.2.18. On 11.16 only
-"launches and repaints" has been re-measured.
+Measured on wine-staging 11.15 with rekordbox 7.2.17/7.2.18. On 11.16, "launches
+and repaints", the XDJ-XZ USB readback, and PRO DJ LINK over the router LAN have
+been re-measured (2026-09-12).
 
 ## What is not proven
 
-- **No exported stick has been read by a real CDJ.** `bin/pdbcheck.py` validates
-  the database structurally.
+- **`bin/pdbcheck.py` checks `export.pdb` structurally** — page size, tables,
+  ranges. The XDJ-XZ reading the stick (T02) is the evidence that a real player
+  accepts it; it is not a check of every field in the database.
+- **PRO DJ LINK has been proven from the player side only** — a real XDJ-XZ
+  browsing and playing from this host (T15).
 - **No full DDJ-400 performance pass** — pad modes, FX, filters, crossfader
   curve, headphone cue, hot cues.
 - Latency is 512 samples (11.6 ms), the same as a DDJ-400 on Windows. Lower costs
