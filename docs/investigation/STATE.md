@@ -24,10 +24,16 @@ kernel, not Wine.**
   rawmidi device but no `snd_seq_midi` sequencer port, so Wine saw no MIDI.
   The launcher now FAILs on this and says "Reboot". `notify-send` now carries
   FAIL/refusal messages to the desktop, since the menu entry has no terminal.
-- **Not done:** the user's SYSTEM package is still 0.2.0.r12 (old launcher).
-  From the menu it will refuse 11.18 because it looks only in /usr/share. Needs a
-  package built from this commit and `pacman -U`. CI has not run on these changes.
-  Nothing pushed.
+- **System package updated:** `rekordbox-wine-git 0.2.0.r283.g7c96e3b-1`, built
+  with makepkg from the local commit (PATH-TO-GOLD step 12) and checked from the inside:
+  upstream/patches shipped, 11.18 DLLs, `.built-for-wine = 11.18`, winex11.so 41 glX.
+  Installed `--check` on prefixes/rb7: private tree green. The controller FAILs
+  with "Reboot" (correct). dxgi/mmdevapi/setupapi show "prefix copy differs":
+  check mode never copies, and the next launch installs them.
+- **Not done:** CI has not run on these changes. Nothing pushed (publish via
+  the `publish` branch onto origin/master, see below). Arch is at 11.19 already.
+  The negative GLX path (a winex11.so without GLX) was not exercised; only the
+  positive path was.
 
 ### Next action
 Reboot (user). Then `aconnect -l | grep DDJ` and `rekordbox-wine --check`,
