@@ -57,6 +57,12 @@ fi
 # with real patched files in the six places that need them, and run against
 # that. The system Wine is never touched and other applications never see us.
 PRIVATE_WINE="${RBW_PRIVATE_WINE:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/wine}"
+# Where a USER's rebuild lands. The package's own artifacts live under $DATADIR,
+# which is root-owned, and are valid for the one Wine the package was built
+# against. When Wine moves on, build-patched-dlls.sh writes here instead, without
+# root, and everything below looks here first. Must match build-patched-dlls.sh
+# and make-private-wine.sh.
+USER_ART="${RBW_ARTIFACTS:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/artifacts}"
 WINE="$PRIVATE_WINE/bin/wine"
 # The tree mirrors the system's own relative lib path, which differs by distro
 # (Arch lib/wine, Debian lib/<triplet>/wine, Fedora lib64/wine). It records
@@ -134,6 +140,14 @@ hdr()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 # A checker that knows the run is doomed and starts it anyway is worse than no
 # checker, because it converts a legible error into a mystery.
 blocker() { bad "$*"; BLOCKERS+=("$*"); }
+# The menu entry runs us with Terminal=false, so every FAIL and every "Not
+# launching" was printed to nowhere: from the desktop, a refusal looked exactly
+# like rekordbox silently not opening. Say it where the user is looking.
+desktop_tell() {   # summary, body
+  [[ -t 1 ]] && return 0
+  command -v notify-send >/dev/null 2>&1 || return 0
+  notify-send -a rekordbox-wine -u critical -i dialog-error "$1" "$2" 2>/dev/null || true
+}
 
 # Registry reads parse the prefix's user.reg DIRECTLY rather than shelling out
 # to `wine reg query`.
@@ -225,6 +239,7 @@ declare -A DLL_MARKER=(
 
 for dll in dxgi mmdevapi setupapi; do
   art="$DATADIR/artifacts/$dll-patched-native-$WINE_VER.dll"
+  [[ -f "$art" ]] || art="$USER_ART/$dll-patched-native-$WINE_VER.dll"
   dst="$WINEPREFIX/drive_c/windows/system32/$dll.dll"
 
   if [[ ! -f "$art" ]]; then
@@ -342,8 +357,9 @@ if [[ ! -x "$WINE" ]]; then
     note "Build it with:  $DATADIR/bin/make-private-wine.sh"
   else
     warn "building the private Wine tree (about 5 MB of symlinks)"
-    if RBW_WINEDLL_DIR="$DATADIR/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1 \
-       || RBW_WINEDLL_DIR="$DATADIR/artifacts/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1; then
+    # make-private-wine.sh picks whichever set of patched libraries -- the
+    # user's rebuild or the package's -- was built for the running Wine.
+    if "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1; then
       ok "private Wine tree built"
     else
       blocker "could not build the private Wine tree"
@@ -360,8 +376,7 @@ elif [[ "$_pw_ver" != "$WINE_VER" ]]; then
     # different Wine, instead of quietly assembling a mixed-ABI tree and
     # stamping it with the system version. That refusal is the whole point, so
     # it must reach the user: keep the script's own stderr.
-    if RBW_WINEDLL_DIR="$DATADIR/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null \
-       || RBW_WINEDLL_DIR="$DATADIR/artifacts/winedll" "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null; then
+    if "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null; then
       ok "private Wine tree rebuilt against wine $WINE_VER"
     else
       blocker "the private Wine tree cannot be rebuilt for wine $WINE_VER"
@@ -602,6 +617,29 @@ if lsusb 2>/dev/null | grep -qi '2b73:'; then
   else
     warn "Pioneer device present but no readable /dev/hidraw* — replug it"
   fi
+
+  # rekordbox finds the controller through its MIDI port, and Wine enumerates
+  # MIDI through the ALSA SEQUENCER, not rawmidi. The sequencer port is created
+  # by snd_seq_midi, which the kernel loads on demand when the controller is
+  # plugged in. On 2026-10-07 it could not: the kernel had been upgraded without
+  # a reboot, Arch had deleted the running kernel's modules, and the replugged
+  # DDJ-400 got a rawmidi device and no sequencer port. Every check here said ok;
+  # rekordbox said "no controller". See THEMES/T16.
+  if [[ -r /proc/asound/seq/clients ]] && ! grep -qiE '^Client +[0-9]+ : "(DDJ|Pioneer)' /proc/asound/seq/clients; then
+    if [[ ! -d "/lib/modules/$(uname -r)" ]]; then
+      bad "the controller has no MIDI port: kernel $(uname -r) is running but its modules were removed by an upgrade"
+      note "Reboot. The kernel was updated and cannot load snd_seq_midi until you do."
+      desktop_tell "DDJ controller will not be detected" \
+        "The kernel was updated and the computer has not been restarted since, so the controller's MIDI driver cannot load. Restart, then start rekordbox again."
+    else
+      bad "the controller has no ALSA sequencer port, so rekordbox cannot see it"
+      note "sudo modprobe snd_seq_midi   then replug the controller"
+      desktop_tell "DDJ controller will not be detected" \
+        "Its MIDI port is missing. Run: sudo modprobe snd_seq_midi, then replug the controller."
+    fi
+  else
+    ok "controller has an ALSA sequencer port (how Wine finds its MIDI)"
+  fi
 else
   note "no Pioneer device connected (fine if you are not using one)"
 fi
@@ -827,6 +865,9 @@ if [[ ${#BLOCKERS[@]} -gt 0 ]]; then
   note "that worked:  IgnorePkg = wine-staging   in /etc/pacman.conf"
   echo
   note "Full report:  $SELF --check"
+  desktop_tell "rekordbox was not started" \
+    "$(printf '%s\n' "${BLOCKERS[@]}")
+Run '$SELF --check' in a terminal for the fix."
   exit 1
 fi
 

@@ -71,7 +71,10 @@ depends=('wine-staging' 'alsa-lib' 'alsa-utils' 'python')
 # would otherwise produce a package with two of the fixes missing and no error.
 makedepends=('git' 'clang' 'lld' 'python' 'curl' 'flex' 'bison' 'libx11' 'libxext'
              'libxrandr' 'libxcomposite' 'libxfixes' 'libxi' 'libxcursor'
-             'alsa-lib' 'dbus' 'freetype2' 'gnutls')
+             'alsa-lib' 'dbus' 'freetype2' 'gnutls'
+             # GL/gl.h and GL/glx.h. wine-staging does not pull it in, and
+             # without it winex11.so builds with no GLX (issue #3).
+             'libglvnd')
 optdepends=(
   'pipewire-alsa: audio routing alongside other applications'
   'rtkit: lets audio threads obtain real-time priority. Without it the desktop portal advertises no realtime budget, libpipewire-module-rt sets RLIMIT_RTTIME to zero inside every ALSA client, and any thread later put on a real-time policy is killed by SIGXCPU. See docs/investigation/THEMES/T12'

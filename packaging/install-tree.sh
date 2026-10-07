@@ -92,6 +92,17 @@ for f in docs/*.md; do [[ -f "$f" ]] && install -Dm644 "$f" "$doc/$(basename "$f
 install -dm755 "$doc/THEMES"
 install -m644 docs/investigation/THEMES/T*.md "$doc/THEMES/"
 
+# The series again, at the path the INSTALLED build-patched-dlls.sh reads it
+# from ($share/upstream/patches, mirroring the source tree). Until 2026-10-07 it
+# shipped only under doc/, so the rebuild the launcher prescribes after every
+# Wine upgrade failed with "FAILED 0*.patch" -- and, finding no
+# supported-wine.txt either, skipped the version check without a word. The doc
+# copy below is not enough on its own: Debian images routinely path-exclude
+# /usr/share/doc.
+install -dm755 "$share/upstream/patches"
+install -m644 upstream/patches/0*.patch upstream/patches/rbw-usbhcd.c \
+              upstream/patches/supported-wine.txt "$share/upstream/patches/"
+
 # The patches, so anyone can rebuild them or send them upstream.
 install -dm755 "$doc/patches"
 install -m644 upstream/patches/0*.patch "$doc/patches/"

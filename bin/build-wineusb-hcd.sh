@@ -135,11 +135,12 @@ SO="$SRC/dlls/wineusb.sys/wineusb.so"
 grep -q "$MARKER" <(strings -a "$SYS") || { echo "built .sys has no $MARKER marker"; exit 1; }
 grep -q "$MARKER" <(strings -a "$SO")  || { echo "built .so has no $MARKER marker";  exit 1; }
 
-mkdir -p "$ROOT/artifacts/winedll"
-cp -f "$SYS" "$ROOT/artifacts/winedll/wineusb.sys"
-cp -f "$SO"  "$ROOT/artifacts/winedll/wineusb.so"
+ART="${RBW_ARTIFACTS:-$ROOT/artifacts}"
+mkdir -p "$ART/winedll"
+cp -f "$SYS" "$ART/winedll/wineusb.sys"
+cp -f "$SO"  "$ART/winedll/wineusb.so"
 echo
 echo "built, both halves carry the $MARKER marker:"
-ls -l "$ROOT/artifacts/winedll/wineusb.sys" "$ROOT/artifacts/winedll/wineusb.so"
+ls -l "$ART/winedll/wineusb.sys" "$ART/winedll/wineusb.so"
 echo
-echo "install with:  sudo $ROOT/research/retired/install-wineusb-hcd.sh"
+echo "next: $ROOT/bin/make-private-wine.sh puts them in the private Wine tree"

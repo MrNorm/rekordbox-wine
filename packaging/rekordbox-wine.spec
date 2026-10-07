@@ -23,6 +23,7 @@ BuildRequires:  clang lld python3 curl flex bison
 BuildRequires:  libX11-devel libXext-devel libXrandr-devel libXcomposite-devel
 BuildRequires:  libXfixes-devel libXi-devel libXcursor-devel
 BuildRequires:  alsa-lib-devel dbus-devel freetype-devel gnutls-devel libusb1-devel
+BuildRequires:  libglvnd-devel
 
 # Fedora 43's own wine is 11.0 and WineHQ's F43 repo carries 11.16; F41/F42 top
 # out at 10.18, too old for this patch series. The dependency is deliberately

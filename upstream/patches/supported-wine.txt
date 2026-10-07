@@ -30,6 +30,13 @@
 #   The window REPAINTS: the clock region differs over 65 s, so this is past the
 #   T01 one-frame freeze, which is the failure the whole project exists to fix.
 #   NOT re-measured on 11.16: audio, USB export, DDJ-400. Unproven here.
+#
+# 11.18 — 2026-10-07. Same series, no rebase: applies with offsets only (0007,
+#   0008, 0009), zero fuzz, checked hunk by hunk against a pristine tree.
+#   8/8 components built, all markers, winex11.so carries GLX (41 glX strings).
+#   rekordbox 7.2.18 launches with full UI; verifyloaded green.
+#   NOT measured: repaint test, audio, USB export, DDJ-400 (the controller was
+#   blocked by an unrelated kernel issue, THEMES/T16). 11.17 never built here.
 # ----------------------------------------------------------------------------
 #
 # WHAT MOVED BETWEEN 11.15 AND 11.16, AND WHAT IT COST TO FIND OUT
@@ -54,3 +61,4 @@
 #
 # version
 11.16
+11.18

@@ -28,14 +28,25 @@ cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
 ROOT="$PWD"
 . "$ROOT/bin/winepaths.sh"
 TREE="${1:-${RBW_PRIVATE_WINE:-$HOME/.local/share/rekordbox-wine/wine}}"
-SRCDIR="${RBW_WINEDLL_DIR:-}"
-if [[ -z "$SRCDIR" ]]; then
-  if [[ -d "$ROOT/artifacts/winedll" ]]; then SRCDIR="$ROOT/artifacts/winedll"; else SRCDIR="$ROOT/winedll"; fi
-fi
-
 WINE_BIN="$(readlink -f "$(command -v wine)")"
 WINE_VER="$(wine --version 2>/dev/null | sed 's/^wine-//;s/ .*//')"
 [[ -n "$WINE_VER" ]] || { echo "cannot run 'wine --version' — is Wine installed and working?" >&2; exit 1; }
+
+# WHICH patched libraries. Three places can hold a set: a source checkout's
+# artifacts/winedll, the user's own rebuild (written there by
+# build-patched-dlls.sh when the package directory is root-owned), and the
+# package's winedll. Take the first one built for the RUNNING Wine. If none is,
+# take the first that exists, so the ABI gate below refuses with a real path.
+USER_ART="${RBW_ARTIFACTS:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/artifacts}"
+SRCDIR="${RBW_WINEDLL_DIR:-}"
+if [[ -z "$SRCDIR" ]]; then
+  for d in "$ROOT/artifacts/winedll" "$USER_ART/winedll" "$ROOT/winedll"; do
+    [[ -d "$d" ]] || continue
+    [[ -n "$SRCDIR" ]] || SRCDIR="$d"
+    if [[ "$(cat "$d/.built-for-wine" 2>/dev/null)" == "$WINE_VER" ]]; then SRCDIR="$d"; break; fi
+  done
+  [[ -n "$SRCDIR" ]] || SRCDIR="$ROOT/winedll"
+fi
 SYS_LIB_ROOT="$(dirname "$WINE_PE_DIR")"          # e.g. /usr/lib/wine, or Debian's /usr/lib/<triplet>/wine
 SYS_PREFIX="$(dirname "$(dirname "$WINE_BIN")")"  # e.g. /usr, or /opt/wine-staging
 
@@ -74,11 +85,12 @@ echo "private tree: $TREE"
 # existed; treat it as unknown and refuse just the same, because "unknown" is
 # how the original bug presented.
 SRC_VER="$(cat "$SRCDIR/.built-for-wine" 2>/dev/null || echo unknown)"
+#
+# There is deliberately NO override. RBW_ALLOW_UNTESTED_WINE used to bypass this
+# too, so a user who exported it to try a new Wine -- and whose build then
+# failed -- got exactly the T14 tree from this script. A mismatched ABI is not
+# "untested"; it is known not to load.
 if [[ "$SRC_VER" != "$WINE_VER" ]]; then
-  if [[ "${RBW_ALLOW_UNTESTED_WINE:-0}" == 1 ]]; then
-    echo "WARNING: patched libraries were built for wine $SRC_VER, system wine is $WINE_VER" >&2
-    echo "         RBW_ALLOW_UNTESTED_WINE=1 -- building the tree anyway. Expect ABI failures." >&2
-  else
     cat >&2 <<EOM
 refusing to build a mixed-ABI Wine tree.
 
@@ -91,22 +103,20 @@ cannot be used with this Wine. Copying them anyway produces an install that
 passes every marker check and does not run -- exactly what happened on
 2026-09-02 (THEMES/T14).
 
-Rebuild the patched libraries against the Wine you are running:
+Rebuild the patched libraries against the Wine you are running (no root):
 
-  bin/build-patched-dlls.sh
+  $ROOT/bin/build-patched-dlls.sh
 
-If wine $WINE_VER is not yet in upstream/patches/supported-wine.txt, that
-build will also ask you to confirm with RBW_ALLOW_UNTESTED_WINE=1. Doing so is
-how the supported list grows -- record what you measured when you add it.
+If wine $WINE_VER is not yet in supported-wine.txt, that build will also ask
+you to confirm with RBW_ALLOW_UNTESTED_WINE=1.
 
 Or hold Wine at $SRC_VER (Arch: IgnorePkg = wine-staging in /etc/pacman.conf).
 EOM
     exit 1
-  fi
 fi
 
 for f in "${PATCHED_UNIX[@]}" "${PATCHED_PE[@]}"; do
-  [[ -f "$SRCDIR/$f" ]] || { echo "missing patched build: $SRCDIR/$f — run bin/build-patched-dlls.sh" >&2; exit 1; }
+  [[ -f "$SRCDIR/$f" ]] || { echo "missing patched build: $SRCDIR/$f — run $ROOT/bin/build-patched-dlls.sh" >&2; exit 1; }
   if [[ "$(strings -a "$SRCDIR/$f" | grep -c -- "${MARKER[$f]}" || true)" -eq 0 ]]; then
     echo "refusing: $SRCDIR/$f has no ${MARKER[$f]} marker, so it is not a patched build" >&2; exit 1
   fi

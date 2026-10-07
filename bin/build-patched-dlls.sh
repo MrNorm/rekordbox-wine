@@ -35,6 +35,17 @@ SRC="$CACHE/wine-$WINE_VER"
 . "$ROOT/bin/winepaths.sh"
 WINE_LIB="${WINE_LIB:-$WINE_PE_DIR}"
 
+# WHERE THE RESULTS GO. In a source checkout, artifacts/ beside the source. In
+# an installed package $ROOT is /usr/share/rekordbox-wine, root-owned, and the
+# launcher sends every user here after a Wine upgrade with "no root" -- so write
+# to the user's data directory instead, which the launcher and
+# make-private-wine.sh both search. Until 2026-10-07 this was always
+# $ROOT/artifacts, and the installed rebuild could not have succeeded.
+if [[ -n "${RBW_ARTIFACTS:-}" ]]; then ART="$RBW_ARTIFACTS"
+elif [[ -w "$ROOT" ]];             then ART="$ROOT/artifacts"
+else ART="${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/artifacts"
+fi
+
 # component : make target : marker string
 PE_COMPONENTS=(
   "dxgi:dlls/dxgi/x86_64-windows/dxgi.dll:RBW-PATCH"
@@ -51,13 +62,40 @@ UNIX_COMPONENTS=(
 # $# inside a function is the FUNCTION's argument count, not the script's, so
 # the "no arguments means all components" test has to read a captured copy.
 WANT=("$@"); NWANT=$#
+# An unknown name -- a typo, or --help -- used to select nothing, run the whole
+# fetch/patch/configure first, and only then fail with "NOTHING WAS BUILT".
+KNOWN="dxgi mmdevapi setupapi mountmgr.sys winealsa winex11 mountmgr wineusb"
+for w in "$@"; do
+  if [[ " $KNOWN " != *" $w "* ]]; then
+    [[ $w == -h || $w == --help ]] || echo "unknown component: $w"
+    echo "usage: $0 [component ...]      (default: all)"
+    echo "components: $KNOWN"
+    [[ $w == -h || $w == --help ]] && exit 0 || exit 2
+  fi
+done
 want() { [[ $NWANT -eq 0 || " ${WANT[*]} " == *" $1 "* ]]; }
 
 # Check the version BEFORE downloading 46 MB and configuring for five minutes,
 # only to fail on patch three with a diff error the user cannot act on.
 SUPPORTED="$ROOT/upstream/patches/supported-wine.txt"
-if [[ -f "$SUPPORTED" ]] && ! grep -qE "^[[:space:]]*${WINE_VER//./\.}([[:space:]]|$)" "$SUPPORTED"; then
+# A missing list used to skip this check silently -- which is what the INSTALLED
+# copy did, because the package did not ship the list beside it.
+if [[ ! -f "$SUPPORTED" ]] || ! compgen -G "$ROOT/upstream/patches/0*.patch" >/dev/null; then
+  echo "cannot find the patch series under $ROOT/upstream/patches/"
+  echo "This installation is incomplete; reinstall the package."
+  exit 1
+fi
+if ! grep -qE "^[[:space:]]*${WINE_VER//./\.}([[:space:]]|$)" "$SUPPORTED"; then
   if [[ "${RBW_ALLOW_UNTESTED_WINE:-0}" != 1 ]]; then
+    # A mistyped override (BW_ALLOW..., RBW_ALLOW_UNTESTED_WINE=yes) used to be
+    # ignored silently, printing the same refusal as no override at all.
+    near="$(env | grep -E '^[A-Z_]*ALLOW_UNTESTED[A-Z_]*=' || true)"
+    if [[ -n "$near" ]]; then
+      echo "Saw an override, but not the one this script reads:"
+      echo "$near" | sed 's/^/  /'
+      echo "The variable must be exactly RBW_ALLOW_UNTESTED_WINE=1."
+      echo
+    fi
     echo "wine $WINE_VER is not a version this patch series has been tested against."
     echo
     echo "Known good:"; grep -vE '^[[:space:]]*(#|$)' "$SUPPORTED" | sed 's/^/  /'
@@ -91,26 +129,41 @@ fi
 # never produced.
 echo
 echo "=== patch series ==="
+FUZZED=0
 for p in "$ROOT"/upstream/patches/0*.patch; do
   name="$(basename "$p")"
   if (cd "$SRC" && patch -p1 -R --dry-run -s -f < "$p" >/dev/null 2>&1); then
     echo "  already applied  $name"
   elif (cd "$SRC" && patch -p1 --dry-run -s -f < "$p" >/dev/null 2>&1); then
-    (cd "$SRC" && patch -p1 -s < "$p")
+    out="$(cd "$SRC" && patch -p1 --no-backup-if-mismatch < "$p")"
     echo "  applied          $name"
+    # An offset is harmless. Fuzz means GNU patch ignored context lines that no
+    # longer match -- the "applied into code whose logic changed" case. Say so.
+    if grep -q "with fuzz" <<<"$out"; then
+      grep "with fuzz" <<<"$out" | sed 's/^/      FUZZ: /'
+      FUZZED=1
+    fi
   else
     echo "  FAILED           $name — the tree is not in a state this series expects"
     exit 1
   fi
 done
+if [[ $FUZZED == 1 ]]; then
+  echo "  WARNING: hunks above applied with fuzz. Review them against the new Wine"
+  echo "  source before trusting this build; rebase the patch if the logic moved."
+fi
 
 # ---------------------------------------------------------------- configure
 cd "$SRC"
 if [[ ! -f config.status ]]; then
   echo
   echo "configuring (once; several minutes)..."
-  ./configure --enable-win64 --disable-tests >"$CACHE/configure.log" 2>&1 \
-    || { echo "configure failed — see $CACHE/configure.log"; exit 1; }
+  # --with-opengl turns "no GL headers" from a note into an error. Without it,
+  # configure quietly builds a winex11.so with no GLX at all; that file carries
+  # RBW-POPUP, passes every marker check, and rekordbox dies after its splash
+  # (GitHub issue #3: the CI container had no libglvnd, so no gl.h/glx.h).
+  ./configure --enable-win64 --disable-tests --with-opengl >"$CACHE/configure.log" 2>&1 \
+    || { echo "configure failed — see $CACHE/configure.log:"; tail -4 "$CACHE/configure.log" | sed 's/^/    /'; exit 1; }
 
   # Wine's configure does not fail when a development package is missing: it
   # prints a note and quietly drops the driver from the build. A missing
@@ -171,7 +224,7 @@ open(p, "wb").write(b.replace(m, b"rbw patched dll ")) if m in b else None
 ' "$1"
 }
 
-mkdir -p "$ROOT/artifacts" "$ROOT/artifacts/winedll"
+mkdir -p "$ART/winedll"
 built=()
 
 for spec in "${PE_COMPONENTS[@]}" "${UNIX_COMPONENTS[@]}"; do
@@ -189,13 +242,22 @@ for spec in "${PE_COMPONENTS[@]}" "${UNIX_COMPONENTS[@]}"; do
   if [[ "$(strings -a "$target" | grep -c -- "$marker" || true)" -eq 0 ]]; then
     echo "  VERIFY FAILED: $target has no '$marker' — stock build?"; exit 1
   fi
+  # A marker proves provenance, not function. A winex11.so from a tree that
+  # was configured without GL carries RBW-POPUP and has no GLX -- issue #3.
+  # Arch's own winex11.so has 41 glX strings; require some.
+  if [[ $name == winex11 && "$(strings -a "$target" | grep -c '^glX' || true)" -eq 0 ]]; then
+    echo "  VERIFY FAILED: $target has no GLX — built without OpenGL headers."
+    echo "  Install them (Arch: libglvnd; Debian: libgl-dev; Fedora: libglvnd-devel),"
+    echo "  then: rm $SRC/config.status && rerun this script."
+    exit 1
+  fi
 
   case "$name" in
     dxgi|mmdevapi|setupapi)
-      out="$ROOT/artifacts/$name-patched-native-$WINE_VER.dll"
+      out="$ART/$name-patched-native-$WINE_VER.dll"
       cp -f "$target" "$out"; blank_marker "$out" ;;
-    mountmgr.sys) cp -f "$target" "$ROOT/artifacts/winedll/mountmgr.sys" ;;
-    *)            cp -f "$target" "$ROOT/artifacts/winedll/$(basename "$target")" ;;
+    mountmgr.sys) cp -f "$target" "$ART/winedll/mountmgr.sys" ;;
+    *)            cp -f "$target" "$ART/winedll/$(basename "$target")" ;;
   esac
   echo "  ok — marker '$marker' present"
   built+=("$name")
@@ -212,9 +274,9 @@ done
 if want wineusb; then
   echo
   echo "=== wineusb ==="
-  if RBW_WINE_BUILD="$CACHE" "$ROOT/bin/build-wineusb-hcd.sh" >"$CACHE/build-wineusb.log" 2>&1; then
+  if RBW_WINE_BUILD="$CACHE" RBW_ARTIFACTS="$ART" "$ROOT/bin/build-wineusb-hcd.sh" >"$CACHE/build-wineusb.log" 2>&1; then
     for f in wineusb.sys wineusb.so; do
-      if [[ "$(strings -a "$ROOT/artifacts/winedll/$f" 2>/dev/null | grep -c -- RBW-USBHCD || true)" -eq 0 ]]; then
+      if [[ "$(strings -a "$ART/winedll/$f" 2>/dev/null | grep -c -- RBW-USBHCD || true)" -eq 0 ]]; then
         echo "  VERIFY FAILED: $f has no RBW-USBHCD marker"; exit 1
       fi
     done
@@ -244,9 +306,11 @@ fi
 #
 # These are unix .so files linked against Wine internals. They are valid for
 # exactly one Wine version, so say which one, in the directory, next to them.
-echo "$WINE_VER" > "$ROOT/artifacts/winedll/.built-for-wine"
+echo "$WINE_VER" > "$ART/winedll/.built-for-wine"
 
 echo
 echo "built and verified: ${built[*]}"
-echo "  prefix DLLs      -> artifacts/*-patched-native-$WINE_VER.dll"
-echo "  system libraries -> artifacts/winedll/   (built for wine $WINE_VER)"
+echo "  prefix DLLs      -> $ART/*-patched-native-$WINE_VER.dll"
+echo "  system libraries -> $ART/winedll/   (built for wine $WINE_VER)"
+echo
+echo "next: $ROOT/bin/make-private-wine.sh   (or just start rekordbox-wine)"

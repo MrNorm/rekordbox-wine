@@ -1,6 +1,43 @@
 # STATE — read this first
 
-## Where things are — 2026-09-02
+## Where things are — 2026-10-07
+
+**Wine 11.18 builds and runs. The rebuild path a packaged user is told to take
+was broken, and is now fixed. The controller is not detected, and that is the
+kernel, not Wine.**
+
+- **11.18:** the series applies with offsets only, zero fuzz, checked per hunk
+  against a pristine tree. 8/8 components built, all markers present, winex11.so has GLX.
+  rekordbox 7.2.18 up, full UI (user saw it), verifyloaded green. Added to
+  `supported-wine.txt` with what was NOT measured. Arch is already at 11.19
+  (GitHub issue #1).
+- **T15 (fixed, local):** the installed `build-patched-dlls.sh` could never work.
+  The series was shipped only under doc/. The version gate skipped silently when
+  its list was missing. Output went to root-owned /usr/share. `make-private-wine.sh`
+  let `RBW_ALLOW_UNTESTED_WINE` bypass the ABI gate. User rebuilds now go to
+  `~/.local/share/rekordbox-wine/artifacts/` and every consumer looks there.
+  Also: fuzz is reported, a mistyped override is named, unknown args are rejected,
+  and configure runs `--with-opengl` with GLX verified in winex11.so (GitHub issue #3).
+  Verified in a read-only simulated install from a cold cache, then launched.
+- **T16 (diagnosed):** running kernel 7.2.4 has no module tree (linux upgraded
+  to 7.2.7 on 2026-09-28, no reboot since 09-13). The replugged DDJ-400 got a
+  rawmidi device but no `snd_seq_midi` sequencer port, so Wine saw no MIDI.
+  The launcher now FAILs on this and says "Reboot". `notify-send` now carries
+  FAIL/refusal messages to the desktop, since the menu entry has no terminal.
+- **Not done:** the user's SYSTEM package is still 0.2.0.r12 (old launcher).
+  From the menu it will refuse 11.18 because it looks only in /usr/share. Needs a
+  package built from this commit and `pacman -U`. CI has not run on these changes.
+  Nothing pushed.
+
+### Next action
+Reboot (user). Then `aconnect -l | grep DDJ` and `rekordbox-wine --check`,
+expecting `ok controller has an ALSA sequencer port`, then a DDJ-400 pass on
+11.18 (jog, faders, pads, LEDs). This is the first controller measurement since 11.15.
+
+### Blocked on
+The user: a reboot, and approving the push / package install.
+
+## Where things were — 2026-09-02
 
 **Wine moved and it broke everything, silently. That is now fixed, rebased and
 under CI.** rekordbox runs again on wine-staging 11.16; see
@@ -1303,6 +1340,11 @@ error anywhere in a 1.2M-line log.
   reproducing automatically: run `20260813T062324-rb7-stale-surface-confirm`.
 
 ## Active themes
+
+- `docs/investigation/THEMES/T16-kernel-upgrade-no-midi-port.md`: **OPEN 2026-10-07.** No DDJ
+  sequencer port after a kernel upgrade without reboot. Cure is a reboot; verify after.
+- `docs/investigation/THEMES/T15-installed-rebuild-path.md`: **RESOLVED locally 2026-10-07.**
+  The installed rebuild path could not run. Close once CI is green on it.
 
 - `docs/investigation/THEMES/T14-wine-upgrade-regression.md` — **RESOLVED 2026-09-02.** A Wine
   upgrade produced a mixed-ABI install that every instrument called healthy.

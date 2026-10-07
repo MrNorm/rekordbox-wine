@@ -201,8 +201,18 @@ Or install a release built for your Wine, or hold Wine back:
 IgnorePkg = wine-staging
 ```
 
-Untested Wine versions need `RBW_ALLOW_UNTESTED_WINE=1` to build. Tested versions
-are listed in [`upstream/patches/supported-wine.txt`](upstream/patches/supported-wine.txt).
+An installed package writes the rebuilt components to
+`~/.local/share/rekordbox-wine/artifacts/`, not to `/usr/share`, and the launcher
+looks there first. The package's own copies are left alone.
+
+Untested Wine versions need `RBW_ALLOW_UNTESTED_WINE=1` to build:
+
+```sh
+RBW_ALLOW_UNTESTED_WINE=1 /usr/share/rekordbox-wine/bin/build-patched-dlls.sh
+```
+
+Tested versions are listed in
+[`upstream/patches/supported-wine.txt`](upstream/patches/supported-wine.txt).
 
 **The two version lists behave differently.** An unlisted Wine cannot load, so
 the launcher refuses. An unlisted rekordbox is only unmeasured, so it warns.
