@@ -30,8 +30,13 @@ kernel, not Wine.**
   Installed `--check` on prefixes/rb7: private tree green. The controller FAILs
   with "Reboot" (correct). dxgi/mmdevapi/setupapi show "prefix copy differs":
   check mode never copies, and the next launch installs them.
-- **Not done:** CI has not run on these changes. Nothing pushed (publish via
-  the `publish` branch onto origin/master, see below). Arch is at 11.19 already.
+- **Published 2026-10-07** to origin/master (`d0d6851`) via the publish branch.
+  CI: build 37648922489 green on Arch's **wine 11.19**; packages 37649550367
+  deb+rpm green. The first packages run FAILED deb on the new `--with-opengl`
+  guard (Debian needs `libegl-dev`), so every earlier .deb most likely shipped
+  without OpenGL (issue #3's defect). Fixed. Issue #3 is still open on GitHub;
+  close it with a pointer to d0d6851 once a release is cut.
+  No release cut: v0.2.2 assets are still the 11.16 build.
   The negative GLX path (a winex11.so without GLX) was not exercised; only the
   positive path was.
 

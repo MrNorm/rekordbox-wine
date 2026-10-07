@@ -1330,3 +1330,8 @@ WINE 11.18 + T15 + T16. User reported 'your own command doesn't work': literal c
 _last run: `20260813T082222-rb7-PATCHED-v2-rounded`_
 
 Installed rekordbox-wine-git 0.2.0.r283.g7c96e3b-1 (makepkg from local commit, verified inside: shipped series, 11.18 artifacts, GLX present). Installed launcher --check on rb7: private tree green on 11.18, controller FAIL 'Reboot' as designed (T16). Also fixed winedll selection order so a stale user rebuild cannot beat a newer package for the same Wine (7c96e3b). Awaiting user reboot for T16 verification and first DDJ-400 measurement since 11.15.
+
+### 2026-10-07T17:12:20+01:00
+_last run: `20260813T082222-rb7-PATCHED-v2-rounded`_
+
+PUBLISHED T15/T16 work to origin/master (548db0e, then d0d6851) via the publish branch; trees verified identical to local master before each push. CI: Arch build 37648922489 green against wine 11.19. packages 37648922432 deb FAILED on the new --with-opengl guard — 'EGL 64-bit development files not found' — Debian needs libegl-dev; earlier .debs most likely shipped winex11 without OpenGL (issue #3) while CI was green. Added libegl-dev; packages 37649550367 deb+rpm green. No release cut; issue #3 left open.
