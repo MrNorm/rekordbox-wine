@@ -10,7 +10,7 @@ Maintainer: rekordbox-wine maintainers <nobody@example.invalid>
 Build-Depends: debhelper-compat (= 13), clang, lld, python3, curl, flex, bison,
  libx11-dev, libxext-dev, libxrandr-dev, libxcomposite-dev, libxfixes-dev,
  libxi-dev, libxcursor-dev, libasound2-dev, libdbus-1-dev, libfreetype-dev,
- libgnutls28-dev, libusb-1.0-0-dev, libgl-dev
+ libgnutls28-dev, libusb-1.0-0-dev, libgl-dev, libegl-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/MrNorm/rekordbox-wine
 

@@ -72,7 +72,7 @@ jobs:
             devscripts debhelper build-essential clang lld python3 curl flex bison unzip \
             libx11-dev libxext-dev libxrandr-dev libxcomposite-dev libxfixes-dev \
             libxi-dev libxcursor-dev libasound2-dev libdbus-1-dev libfreetype-dev \
-            libgnutls28-dev libusb-1.0-0-dev libgl-dev
+            libgnutls28-dev libusb-1.0-0-dev libgl-dev libegl-dev
           wine --version
 
       - uses: actions/checkout@v4

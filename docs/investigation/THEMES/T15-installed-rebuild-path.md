@@ -66,6 +66,8 @@ user must take after every Wine upgrade.
 | 2026-10-07 | simulated install: /usr/share/rekordbox-wine copied, fixed bin/ + upstream/ overlaid, `chmod -R a-w`; cold cache `~/.cache/rbw-usertest` | T15 fix | exit 0, 8/8 ok, output in `~/.local/share/rekordbox-wine/artifacts/`, no root | installed rebuild works |
 | 2026-10-07 | simulated installed launcher, `RBW_PREFIX=prefixes/rb7` | T15 fix | no FAIL; tree rebuilt `.built-for-wine=11.18`; DLLs installed; rekordbox 7.2.18 up; verifyloaded green; user saw UI | launch path works on 11.18 |
 | 2026-10-07 | same session | none | user: "No controller detected" | → T16 (kernel, not Wine) |
+| 2026-10-07 | CI 37648922489 (build, Arch) | T15 fix pushed | green on Arch's **wine 11.19**, GLX enforced | series builds on 11.19 too |
+| 2026-10-07 | CI 37648922432 (packages) | T15 fix pushed | rpm green; **deb FAILED**: `configure: error: EGL 64-bit development files not found` | `--with-opengl` caught it: Debian needs `libegl-dev`, not only `libgl-dev`. Every earlier .deb was presumably built **without OpenGL** (issue #3's defect, invisible to CI). Added libegl-dev |
 
 ## Upstream
 - [ ] Close GitHub issue #3 once CI builds with libglvnd and the GLX check is green.
