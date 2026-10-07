@@ -33,14 +33,16 @@ WINE_VER="$(wine --version 2>/dev/null | sed 's/^wine-//;s/ .*//')"
 [[ -n "$WINE_VER" ]] || { echo "cannot run 'wine --version' — is Wine installed and working?" >&2; exit 1; }
 
 # WHICH patched libraries. Three places can hold a set: a source checkout's
-# artifacts/winedll, the user's own rebuild (written there by
-# build-patched-dlls.sh when the package directory is root-owned), and the
-# package's winedll. Take the first one built for the RUNNING Wine. If none is,
+# artifacts/winedll, the package's winedll, and the user's own rebuild
+# (written by build-patched-dlls.sh when the package directory is root-owned).
+# Take the first one built for the RUNNING Wine. If none is,
 # take the first that exists, so the ABI gate below refuses with a real path.
+# The package comes BEFORE the user's rebuild: after a package upgrade that
+# ships a newer series for the same Wine, a stale rebuild must not win.
 USER_ART="${RBW_ARTIFACTS:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/artifacts}"
 SRCDIR="${RBW_WINEDLL_DIR:-}"
 if [[ -z "$SRCDIR" ]]; then
-  for d in "$ROOT/artifacts/winedll" "$USER_ART/winedll" "$ROOT/winedll"; do
+  for d in "$ROOT/artifacts/winedll" "$ROOT/winedll" "$USER_ART/winedll"; do
     [[ -d "$d" ]] || continue
     [[ -n "$SRCDIR" ]] || SRCDIR="$d"
     if [[ "$(cat "$d/.built-for-wine" 2>/dev/null)" == "$WINE_VER" ]]; then SRCDIR="$d"; break; fi

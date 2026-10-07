@@ -1023,3 +1023,26 @@ application reports the system one.
 `ntdll.so` both cause Wine to re-derive its tree from a resolved path; leave
 either as a symlink and rekordbox silently runs on stock libraries while every
 marker check still passes. Measured. See `docs/investigation/THEMES/T13`.
+
+---
+
+## Step 12 — package rebuilt for wine 11.18 from the T15 fix — 2026-10-07
+
+    change:    makepkg from commit 6561748 (source rewritten to git+file:// of the
+               local checkout, in ~/.cache/rbw-pkgbuild), then
+               sudo pacman -U rekordbox-wine-git-<ver>-x86_64.pkg.tar.zst
+               replacing rekordbox-wine-git 0.2.0.r12.gdbe14d8-1 (v0.2.2, 11.16).
+
+    reversal:  gh release download v0.2.2 -p '*.pkg.tar.zst' && sudo pacman -U ./rekordbox-wine-git-*.pkg.tar.zst
+               (only useful with wine-staging 11.16; on 11.18 the old launcher
+                refuses to start, which is why this step exists.)
+
+    user-side, no root, created by the T15 rebuild path:
+               ~/.local/share/rekordbox-wine/artifacts/   rm -rf to reverse
+               ~/.cache/rbw-usertest/, ~/.cache/rbw-pkgbuild/   build caches, safe to delete
+
+**A user rebuild after a Wine upgrade now writes to
+`~/.local/share/rekordbox-wine/artifacts/`, never to /usr/share.** A package
+upgrade does not clean it up. That is harmless, because each file is
+version-stamped and the launcher prefers the package's copy when that matches
+the running Wine.
