@@ -74,7 +74,10 @@ jobs:
           # The PKGBUILD clones GitHub master, which is not what this run is
           # testing: on a pull request that built the OLD master and passed or
           # failed for the wrong code. Build the commit that was checked out.
-          sed -i "s|git+\$url.git|git+file://$GITHUB_WORKSPACE#commit=$(git rev-parse HEAD)|" packaging/PKGBUILD
+          # A branch, not #commit=: makepkg 7 fails "invalid reference" on a
+          # commit fragment pointing at the PR's merge commit.
+          git branch -f ci-build HEAD
+          sed -i "s|git+\$url.git|git+file://$GITHUB_WORKSPACE#branch=ci-build|" packaging/PKGBUILD
           grep -q "git+file://" packaging/PKGBUILD || { echo "could not repoint the PKGBUILD source"; exit 1; }
           sudo -u builder bash -c 'cd packaging && makepkg -s --noconfirm --noprogressbar'
 
