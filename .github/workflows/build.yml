@@ -71,6 +71,11 @@ jobs:
           chown -R builder:builder .
           # makepkg's own dependency install needs root without a password.
           echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          # The PKGBUILD clones GitHub master, which is not what this run is
+          # testing: on a pull request that built the OLD master and passed or
+          # failed for the wrong code. Build the commit that was checked out.
+          sed -i "s|git+\$url.git|git+file://$GITHUB_WORKSPACE#commit=$(git rev-parse HEAD)|" packaging/PKGBUILD
+          grep -q "git+file://" packaging/PKGBUILD || { echo "could not repoint the PKGBUILD source"; exit 1; }
           sudo -u builder bash -c 'cd packaging && makepkg -s --noconfirm --noprogressbar'
 
       - name: Verify the built package really contains the patches
