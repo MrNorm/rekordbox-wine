@@ -68,17 +68,18 @@ jobs:
         run: |
           set -euo pipefail
           useradd -m builder
-          chown -R builder:builder .
-          # makepkg's own dependency install needs root without a password.
-          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
           # The PKGBUILD clones GitHub master, which is not what this run is
           # testing: on a pull request that built the OLD master and passed or
           # failed for the wrong code. Build the commit that was checked out.
-          # A branch, not #commit=: makepkg 7 fails "invalid reference" on a
-          # commit fragment pointing at the PR's merge commit.
+          # Before the chown: after it, root's git refuses the repository as
+          # "dubious ownership" (which is what emptied an earlier #commit=).
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git branch -f ci-build HEAD
           sed -i "s|git+\$url.git|git+file://$GITHUB_WORKSPACE#branch=ci-build|" packaging/PKGBUILD
           grep -q "git+file://" packaging/PKGBUILD || { echo "could not repoint the PKGBUILD source"; exit 1; }
+          chown -R builder:builder .
+          # makepkg's own dependency install needs root without a password.
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
           sudo -u builder bash -c 'cd packaging && makepkg -s --noconfirm --noprogressbar'
 
       - name: Verify the built package really contains the patches
