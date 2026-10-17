@@ -1,6 +1,7 @@
 post_install() {
   cat <<'EOF'
-rekordbox-wine is installed. It does NOT modify your system Wine.
+rekordbox-wine is installed. It runs rekordbox on its own Wine, in
+/usr/lib/rekordbox-wine/wine, and never uses or modifies your system Wine.
 
 Two commands, then you are done. Neither needs root.
 
@@ -16,10 +17,10 @@ Two commands, then you are done. Neither needs root.
 
        rekordbox-wine
 
-That is the whole setup. The launcher builds its private Wine tree, installs
-the patched DLLs into the prefix, applies the audio settings and corrects
-Wine's own menu entry -- every time it starts, so it repairs itself if
-something drifts. You can also start it from your application menu.
+That is the whole setup. The launcher checks its Wine, cleans stale settings
+out of the prefix and applies the audio settings every time it starts, so it
+repairs itself if something drifts. You can also start it from your
+application menu ("rekordbox (Wine)").
 
 USING A DDJ-400? Two one-off system steps, because they need root or a replug:
 
@@ -29,11 +30,18 @@ USING A DDJ-400? Two one-off system steps, because they need root or a replug:
     takes effect. Without this rekordbox binds an ALSA loopback instead of
     your controller.
 
+  Strongly recommended: sudo pacman -S kernel-modules-hook
+  After a kernel upgrade, Arch deletes the running kernel's modules, so a
+  controller plugged in before you reboot gets no driver. That package keeps
+  them until the reboot.
+
   "rekordbox-wine --check" tells you if either is still outstanding.
 
 UPDATES: nothing to do.
   - rekordbox updates itself: the launcher always starts the newest version.
-  - Your distribution updates Wine: the private tree is rebuilt automatically.
+  - Your distribution updates Wine: nothing changes. rekordbox does not use it.
+  - After every pacman transaction a hook checks that rekordbox-wine can still
+    start, and says so if it cannot. It is silent when all is well.
 
 VERIFY ANYTHING:
        rekordbox-wine --check                          report, change nothing
@@ -55,17 +63,14 @@ EOF
 post_upgrade() {
   cat <<'EOF'
 
-If you upgraded wine, the patched system files were overwritten by the wine
-package and must be reapplied:
+rekordbox-wine now carries its own Wine (/usr/lib/rekordbox-wine/wine).
+Wine upgrades from your distribution no longer affect rekordbox, and nothing
+needs rebuilding after one.
 
-  /usr/share/rekordbox-wine/bin/build-patched-dlls.sh
-  /usr/share/rekordbox-wine/bin/make-private-wine.sh
-
-The private tree records which Wine version it was built against and
-`rekordbox-wine` rebuilds it automatically when that changes, so in most cases
-there is nothing to do.
-
-`rekordbox-wine --check` will tell you which of these is needed.
+The first start after this upgrade removes the per-prefix DLL copies that
+older versions installed; the fixes now live in the bundled Wine. The private
+tree older versions built in ~/.local/share/rekordbox-wine/wine is no longer
+used and can be deleted.
 
 EOF
 }
@@ -75,8 +80,7 @@ post_remove() {
 
 Your system Wine was never modified, so there is nothing to revert.
 
-The private Wine tree and your prefix are under
-~/.local/share/rekordbox-wine and were left alone. Delete that directory if you
+Your prefix is under ~/.local/share/rekordbox-wine and was left alone. Delete that directory if you
 want the disk space back.
 
 EOF

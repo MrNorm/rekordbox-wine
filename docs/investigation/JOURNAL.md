@@ -1335,3 +1335,23 @@ Installed rekordbox-wine-git 0.2.0.r283.g7c96e3b-1 (makepkg from local commit, v
 _last run: `20260813T082222-rb7-PATCHED-v2-rounded`_
 
 PUBLISHED T15/T16 work to origin/master (548db0e, then d0d6851) via the publish branch; trees verified identical to local master before each push. CI: Arch build 37648922489 green against wine 11.19. packages 37648922432 deb FAILED on the new --with-opengl guard — 'EGL 64-bit development files not found' — Debian needs libegl-dev; earlier .debs most likely shipped winex11 without OpenGL (issue #3) while CI was green. Added libegl-dev; packages 37649550367 deb+rpm green. No release cut; issue #3 left open.
+
+### 2026-10-08T18:28:59+01:00
+_last run: `20260813T082222-rb7-PATCHED-v2-rounded`_
+
+T16 reboot was a prerequisite, not the cure — I overclaimed it. Post-reboot (7.2.7) the DDJ seq client existed but rekordbox found no controller: sc query wineusb/winebus = STOPPED 1067, the bus-driver winedevice had crashed. Three one-variable reproductions (fresh prefix; + rb7 registry; + stale 11.15 native cfgmgr32/winmm) all ran wineusb fine, refuting the stale DLLs as a startup cause. Logged relaunch of rb7 worked: wineusb RUNNING, HCD0 queried, aconnect shows DDJ-400 -> WINE midi driver (rekordbox pid). Cause of the one crash unknown -> T17. Launcher now logs terminal-less launches to ~/.local/state/rekordbox-wine/launch.log. Observed the positive branch of the new sequencer check.
+
+### 2026-10-08T18:49:10+01:00
+_last run: `20260813T082222-rb7-PATCHED-v2-rounded`_
+
+USER: keyboard died, menu launches broken, 'you break 4 things fixing 1'. Menu: proven my T17 graft probe (rb7 registry copy) let winemenubuilder delete the real rekordbox 7.2.18 entry at 18:24; restored, verified via kioclient exec (rb7, no FAIL, wineusb RUNNING, DDJ connected). Package menu item launched empty default prefix -> launcher now remembers last prefix. Launch log rotated on --check and destroyed a live session's log -> launches-only timestamped logs. Removed 6 dead wine-extension associations. Keyboard: kxkbrc absent in all home snapshots before user's 18:43 change; suspects are the 18:29 udev-reload hook from my pacman -U and the 18:34 suspend; undiagnosed, T18. Not installing the package until the user answers.
+
+### 2026-10-17T14:48:14+01:00
+_last run: `20261017T1446-runtime-rb7copy-lsass`_
+
+T19: user chose to vendor Wine. Package now builds wine 11.18 + staging 11.18 + series (WoW64) into /usr/lib/rekordbox-wine/wine (607 MB) and runs rekordbox only on it. Launcher: no system-Wine path; removes stale native overrides (rb7 copy had 5 incl. 11.15 cfgmgr32/winmm); winemenubuilder disabled; rbw-runtime-check (also a check-only pacman hook) verifies system libs/sonames. snd_seq_midi+snd_usb_audio preloaded. Runs 20261017T1443 (window-ok, all patched libs from runtime, wineusb RUNNING) and 20261017T1446. T20: pre-11.17 prefixes lack lsass.exe after wineboot -u (rb7 too); launcher restores service programs; SamSs errors 6->0. DDJ not connected: controller acceptance test on the runtime still outstanding. Full makepkg container build in progress.
+
+### 2026-10-17T17:36:42+01:00
+_last run: `20261017T1707-pkg-installed-rb7`_
+
+Installed 0.3.0 with system Wine (wine-staging/mono/gecko/winetricks) and the old package removed. 20261017T1707-pkg-installed-rb7: window-ok on real rb7, 0 maps from /usr/lib/wine. Found T21: a new prefix then prompts to download Wine Mono; fixed by shipping Mono 11.3.0 + Gecko 2.47.4 MSIs in the runtime (sha256 = Wine's own pins). Rebuilt 0.3.0.r295 (325 MB), installed: fresh prefix with empty cache, no prompt; Gecko installs on demand silently. Next: publish, PR, CI, v0.3.0.

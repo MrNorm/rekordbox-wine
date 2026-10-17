@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# build-patched-dlls — produce every patched Wine component rekordbox needs,
-# from a PRISTINE Wine source tree and the patch series in upstream/.
+# build-patched-dlls — DEVELOPER FAST PATH: build just the patched components
+# against the SYSTEM Wine's version, for checking a patch in minutes rather
+# than rebuilding the whole runtime.
 #
-# This is the script the AUR package runs, so it must be able to start from
-# nothing: it fetches the matching Wine source, applies upstream/patches/0*.patch in
+# NOT WHAT THE PACKAGE SHIPS. Since 2026-10-17 the package carries a complete
+# pinned Wine built by bin/build-wine-runtime.sh, and the launcher no longer
+# uses anything this script produces (THEMES/T19). It is kept because a single
+# component builds in minutes.
+#
+# It starts from nothing: it fetches the matching Wine source, applies upstream/patches/0*.patch in
 # order, configures, builds, and then VERIFIES that every component carries its
 # marker string. A component that silently built without its patch is the
 # failure mode this project has paid for repeatedly -- a stock build loads fine
@@ -313,4 +318,6 @@ echo "built and verified: ${built[*]}"
 echo "  prefix DLLs      -> $ART/*-patched-native-$WINE_VER.dll"
 echo "  system libraries -> $ART/winedll/   (built for wine $WINE_VER)"
 echo
-echo "next: $ROOT/bin/make-private-wine.sh   (or just start rekordbox-wine)"
+echo "These are for testing a patch. The package ships bin/build-wine-runtime.sh's"
+echo "whole runtime instead; research/retired/make-private-wine.sh can still"
+echo "assemble a tree from these against the system Wine."

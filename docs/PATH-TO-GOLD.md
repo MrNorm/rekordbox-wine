@@ -1046,3 +1046,51 @@ marker check still passes. Measured. See `docs/investigation/THEMES/T13`.
 upgrade does not clean it up. That is harmless, because each file is
 version-stamped and the launcher prefers the package's copy when that matches
 the running Wine.
+
+## Step 14 — the package carries its own Wine — 2026-10-17
+
+    change:    rekordbox-wine-git 0.3.0: a complete wine 11.18 + staging + series
+               at /usr/lib/rekordbox-wine/wine (bin/build-wine-runtime.sh,
+               pinned by upstream/wine-runtime.conf). No dependency on wine-staging.
+               Adds /usr/share/libalpm/hooks/rekordbox-wine.hook (check-only),
+               and snd_seq_midi + snd_usb_audio to modules-load.d.
+               Stops shipping winedll/, artifacts/, make-private-wine.sh and
+               build-patched-dlls.sh.
+    install:   cd packaging && makepkg -s && sudo pacman -U rekordbox-wine-git-0.3.0*.pkg.tar.zst
+    reversal:  sudo pacman -U <the previous 0.2.0.r* package from ~/.cache/rbw-pkgbuild>
+               (that package needs wine-staging at exactly the version it was built for)
+
+    per prefix, done by the launcher on first start:
+               removes DllOverrides dxgi, mmdevapi, setupapi, cfgmgr32, winmm, and
+               replaces our native copies in system32 with the runtime's builtins.
+    reversal:  for d in dxgi mmdevapi setupapi; do
+                 wine reg add 'HKCU\Software\Wine\DllOverrides' /v $d /d native /f; done
+               (and copy the matching *-patched-native-<ver>.dll back into system32;
+                only meaningful with the 0.2 package)
+
+    user-side, no longer used:
+               ~/.local/share/rekordbox-wine/wine        (the private tree)   rm -rf
+               ~/.local/share/rekordbox-wine/artifacts   (T15 user rebuilds)  rm -rf
+
+**Why:** wine-staging moved three times in six weeks and each move broke
+rekordbox (T14, T15). A pinned Wine inside the package cannot be moved by a
+system update. See THEMES/T19.
+
+### Step 14, applied on the user's machine — 2026-10-17 17:00
+
+    removed:   sudo pacman -Rns rekordbox-wine-git winetricks wine-mono wine-gecko wine-staging
+               (also took the orphaned deps cabextract, unzip, ntsync-autoload; the
+               package's own modules-load.d already loads ntsync)
+    reversal:  sudo pacman -S wine-staging wine-mono wine-gecko winetricks ntsync-autoload
+    installed: sudo pacman -U rekordbox-wine-git-0.3.0.r291.gc006311-1-x86_64.pkg.tar.zst
+    reversal:  sudo pacman -R rekordbox-wine-git
+    prefix:    rekordbox-wine --setup on prefixes/rb7: 5 stale native overrides removed,
+               lsass.exe restored (T20). Reversal as in Step 14 above.
+    menu:      moved ~/.local/share/applications/wine/Programs/rekordbox/"rekordbox 7.2.17"
+               (entries for two test prefixes; the Uninstall one called the system
+               `wine`, which no longer exists) to ~/.local/share/rekordbox-wine/menu-backup/
+    reversal:  mv ~/.local/share/rekordbox-wine/menu-backup/"rekordbox 7.2.17" \
+                  ~/.local/share/applications/wine/Programs/rekordbox/
+    left in place, inert: /usr/lib/wine/x86_64-unix/winealsa.so.rbw-shipping-baseline and
+               /usr/lib/wine/x86_64-windows/setupapi.dll.rbw-backup (old manual backups,
+               not owned by any package). Remove with: sudo rm -r /usr/lib/wine

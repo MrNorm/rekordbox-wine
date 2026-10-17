@@ -17,9 +17,14 @@ PID="${1:-$(pgrep -x rekordbox.exe | head -1)}"
 [ -n "$PID" ] || { echo "verifyloaded: no rekordbox.exe running and no pid given"; exit 2; }
 [ -r "/proc/$PID/maps" ] || { echo "verifyloaded: cannot read /proc/$PID/maps"; exit 2; }
 
+# The PE fixes too: since the runtime ships them as builtins (2026-10-17) they
+# map from its lib/wine/x86_64-windows, and a prefix that still forces an old
+# native copy maps that from system32 instead -- which this would show.
 declare -A WANT=(
   [winealsa.so]=RBW-EVENT [winex11.so]=RBW-POPUP
   [mountmgr.so]=RBW-REMOVABLE [wineusb.so]=RBW-USBHCD
+  [dxgi.dll]=RBW-PATCH [mmdevapi.dll]=RBW-MMDEV
+  [setupapi.dll]=PhysicalDeviceObjectName
 )
 echo "process $PID  ($(tr '\0' ' ' < /proc/$PID/cmdline | cut -c1-60))"
 echo "loader: $(readlink -f /proc/$PID/exe)"
@@ -40,7 +45,7 @@ for lib in "${!WANT[@]}"; do
 done
 echo
 # Stock libraries are the CORRECT answer for anything that is not rekordbox --
-# that is the whole point of the private tree, and reporting it as a failure
+# that is the whole point of a separate runtime, and reporting it as a failure
 # would train the reader to ignore this tool.
 is_rb=0; grep -qa 'rekordbox' "/proc/$PID/cmdline" 2>/dev/null && is_rb=1
 
@@ -54,9 +59,9 @@ if [ "$fail" -eq 0 ]; then
 fi
 if [ "$is_rb" -eq 1 ]; then
   echo -e "\033[31mrekordbox is running on STOCK Wine libraries — the fixes are NOT active.\033[0m"
-  echo "Rebuild the private tree:  bin/make-private-wine.sh"
+  echo "Check the runtime with:  rekordbox-wine --check   (reinstall the package if it fails)"
   exit 1
 fi
 echo "This process uses the system Wine, which is expected: only rekordbox runs"
-echo "against the private tree. Nothing here needs fixing."
+echo "on the package's own Wine runtime. Nothing here needs fixing."
 exit 0

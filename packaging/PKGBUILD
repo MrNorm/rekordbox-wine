@@ -16,8 +16,8 @@
 #
 # WHAT THIS PACKAGE IS NOT: it does not contain rekordbox. rekordbox is
 # proprietary and must be downloaded from rekordbox.com by the user, and signed
-# in to with their own AlphaTheta account. This package ships the patched Wine
-# components, a udev rule, a modprobe rule, and the launcher.
+# in to with their own AlphaTheta account. This package ships its own patched Wine,
+# a udev rule, a modprobe rule, a pacman hook, and the launcher.
 #
 # STATE, HONESTLY — see GOLD-STATUS.md in the source tree for the evidence
 # behind every line of this:
@@ -42,44 +42,54 @@
 #   buffer (11.6 ms), which is what a DDJ-400 user runs on Windows anyway. Going
 #   lower costs roughly one stream teardown every 330 s. See docs/investigation/THEMES/T10.
 #
-# ROOT, AND WHY: four of the fixes are unix-side or driver-side Wine libraries
-# that DllOverrides cannot reach, so they must replace files owned by the `wine`
-# package. This package does NOT overwrite them at install time — that would
-# break wine's file ownership and be silently undone by every wine upgrade.
-# They are installed to /usr/share/rekordbox-wine/winedll and the user runs
-# install-system-wine-patches.sh, which backs up each stock file and can revert
-# every one of them. The launcher checks the markers on every start and prints
-# the command if they are missing. The real fix is upstream; that is what the
-# patches in /usr/share/doc/rekordbox-wine/patches are for.
+# ITS OWN WINE, AND WHY: the fixes are patches to Wine internals, which change
+# with every Wine release. This package therefore ships a complete Wine (11.18
+# with the wine-staging patchset, see upstream/wine-runtime.conf) with the
+# patches compiled in, at /usr/lib/rekordbox-wine/wine, and runs rekordbox on
+# that alone. The distro's Wine is neither used nor modified, so a system update
+# that moves Wine cannot break rekordbox. Earlier versions patched the system
+# Wine and broke on every Wine upgrade (THEMES/T14, T15, T19).
+#
+# The build compiles all of Wine, for both 64-bit and 32-bit Windows programs
+# (WoW64: no lib32 packages needed). Expect 20-60 minutes depending on the CPU.
 
 pkgname=rekordbox-wine-git
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
-pkgdesc="Patched Wine components and launcher for running rekordbox 7.2.x with a DDJ-400 on Linux"
+pkgdesc="rekordbox 7.2.x with a DDJ-400 on Linux: a pinned, patched Wine and a launcher that verifies it"
 arch=('x86_64')
 url="https://github.com/MrNorm/rekordbox-wine"
 license=('LGPL-2.1-or-later')  # the Wine patches; the launcher scripts are MIT
 
-# wine-staging is what every measurement in this project was made against.
-# Plain wine may work; it has not been tested, so it is not claimed.
 provides=('rekordbox-wine')
 conflicts=('rekordbox-wine')
-depends=('wine-staging' 'alsa-lib' 'alsa-utils' 'python')
-# The build compiles Wine libraries from the matching Wine source, so it needs
-# what Wine itself needs. X11 and ALSA headers are load-bearing: without them
-# Wine's configure quietly drops winex11.drv and winealsa.drv and the build
-# would otherwise produce a package with two of the fixes missing and no error.
-makedepends=('git' 'clang' 'lld' 'python' 'curl' 'flex' 'bison' 'libx11' 'libxext'
-             'libxrandr' 'libxcomposite' 'libxfixes' 'libxi' 'libxcursor'
-             'alsa-lib' 'dbus' 'freetype2' 'gnutls'
-             # GL/gl.h and GL/glx.h. wine-staging does not pull it in, and
-             # without it winex11.so builds with no GLX (issue #3).
-             'libglvnd')
+# What the runtime links against or dlopen()s for the capabilities rekordbox
+# uses. No 'wine' or 'wine-staging': the package carries its own, and either
+# can be installed beside it or not at all.
+depends=('glibc' 'libgcc' 'attr' 'fontconfig' 'freetype2' 'gnutls' 'libglvnd'
+         'libx11' 'libxext' 'libxrandr' 'libxi' 'libxcursor' 'libxcomposite'
+         'libxinerama' 'libxrender' 'libxfixes' 'libxxf86vm' 'libxkbcommon' 'wayland'
+         'alsa-lib' 'dbus' 'libusb' 'systemd-libs' 'libpcap'
+         'alsa-utils' 'python')
+# Wine's configure does not fail when a development package is missing: it
+# drops the feature. bin/build-wine-runtime.sh refuses that for every feature
+# rekordbox needs (X, GL, ALSA, USB, udev, dbus, gnutls, fonts).
+makedepends=('git' 'python' 'curl' 'autoconf' 'perl' 'flex' 'bison' 'mingw-w64-gcc'
+             'libx11' 'libxext' 'libxrandr' 'libxcomposite' 'libxfixes' 'libxi'
+             'libxcursor' 'libxinerama' 'libxrender' 'libxxf86vm' 'libxkbcommon' 'wayland'
+             'alsa-lib' 'libpulse' 'dbus' 'freetype2' 'fontconfig' 'gnutls' 'libusb'
+             'systemd' 'libpcap' 'attr'
+             # GL/gl.h and GL/glx.h; without them winex11.so has no GLX (issue #3).
+             'libglvnd' 'mesa' 'vulkan-headers' 'vulkan-icd-loader' 'opencl-headers'
+             'sdl2' 'gst-plugins-base-libs' 'ffmpeg')
 optdepends=(
   'pipewire-alsa: audio routing alongside other applications'
   'rtkit: lets audio threads obtain real-time priority. Without it the desktop portal advertises no realtime budget, libpipewire-module-rt sets RLIMIT_RTTIME to zero inside every ALSA client, and any thread later put on a real-time policy is killed by SIGXCPU. See docs/investigation/THEMES/T12'
-  'wine-mono: .NET support inside the prefix'
-  'wine-gecko: embedded browser support inside the prefix'
+  'kernel-modules-hook: keeps the running kernel modules after a kernel upgrade until you reboot, so a controller plugged in before the reboot still works'
+  'gst-plugins-base-libs: media decoding through Windows Media Foundation'
+  'ffmpeg: media decoding through Windows Media Foundation'
+  'vulkan-icd-loader: Vulkan, for Direct3D 12'
+  'libpulse: the PulseAudio driver (rekordbox-wine selects ALSA)'
 )
 install=rekordbox-wine.install
 
@@ -87,8 +97,8 @@ install=rekordbox-wine.install
 # ntdll's hand-written syscall dispatcher references from assembly, and the
 # build dies with `undefined reference to init_syscall_frame`. Arch's own wine
 # package disables it for the same reason. !strip and !debug keep makepkg away
-# from the PE builtins, which are not ELF and have no business being processed
-# by binutils here.
+# from the PE builtins, which are not ELF; build-wine-runtime.sh strips the
+# unix side itself.
 options=('!lto' '!strip' '!debug')
 
 # Built straight from GitHub — no AUR involved. Cloning the canonical URL is
@@ -99,63 +109,31 @@ sha256sums=('SKIP')   # a git source is verified by its revision, not a hash
 pkgver() {
   cd "$srcdir/rekordbox-wine"
   # 0.2.0.r<commits>.g<short-sha> — sorts correctly and names the exact commit.
-  printf "%s.r%s.g%s" "0.2.0" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  printf "%s.r%s.g%s" "0.3.0" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
 build() {
   cd "$srcdir/rekordbox-wine"
 
   # Build inside $srcdir, not in ~/.cache. A developer's cache holds a Wine tree
-  # that already has the series applied AND whatever diagnostic code was being
-  # measured that week -- so a package built there would quietly ship debug
-  # instrumentation and would not be reproducible on anyone else's machine.
+  # that may carry whatever diagnostic code was being measured that week, so a
+  # package built there would not be reproducible on anyone else's machine.
   export RBW_WINE_BUILD="$srcdir/wine-build"
+  # makepkg's CFLAGS carry -flto and hardening flags meant for ordinary C;
+  # Wine's own defaults are what every measurement was made with.
+  unset CFLAGS CXXFLAGS LDFLAGS
 
-  # Downloads the Wine source matching the version installed on THIS machine,
-  # applies upstream/patches/0001..0009, configures once, and builds the seven
-  # components. Version-matching is deliberate: a library built from a different
-  # source tree may still load, and nothing about debugging that is worth
-  # anyone's time.
-  ./bin/build-patched-dlls.sh
+  # Fetches the pinned Wine and wine-staging (sha256-checked), applies staging,
+  # then the series, builds everything and verifies every marker in the
+  # INSTALLED tree. Stages into build/runtime, where install-tree.sh takes it.
+  ./bin/build-wine-runtime.sh build/runtime
 }
 
 check() {
   cd "$srcdir/rekordbox-wine"
-  # Every patched component carries a distinctive marker string. If a marker is
-  # missing, the build silently produced a stock component — the failure mode
-  # that has cost this project whole sessions, because a stock library loads
-  # perfectly and simply behaves as though nothing was ever fixed.
-  #
-  # build-patched-dlls.sh already checks these; this re-checks the files that
-  # were actually staged, which is a different claim.
-  local wine_ver ok=1
-  wine_ver="$(wine --version | sed 's/^wine-//;s/ .*//')"
-
-  local f m
-  for spec in \
-    "artifacts/dxgi-patched-native-$wine_ver.dll:RBW-PATCH" \
-    "artifacts/mmdevapi-patched-native-$wine_ver.dll:RBW-MMDEV" \
-    "artifacts/setupapi-patched-native-$wine_ver.dll:PhysicalDeviceObjectName" \
-    "artifacts/winedll/winealsa.so:RBW-EVENT3" \
-    "artifacts/winedll/winealsa.so:alsa_rawmidi_open" \
-    "artifacts/winedll/winex11.so:RBW-POPUP" \
-    "artifacts/winedll/mountmgr.so:RBW-REMOVABLE" \
-    "artifacts/winedll/mountmgr.sys:RBW-BUSTYPE" \
-    "artifacts/winedll/mountmgr.sys:RBW-VOLNODE" \
-    "artifacts/winedll/wineusb.sys:RBW-USBHCD" \
-    "artifacts/winedll/wineusb.so:RBW-USBHCD" \
-  ; do
-    f="${spec%:*}"; m="${spec##*:}"
-    if [[ ! -f "$f" ]]; then
-      echo "::error:: $f was never built"; ok=0; continue
-    fi
-    # Count rather than `grep -q`: grep exits at the first match, strings takes
-    # SIGPIPE, and under makepkg's `set -e` the check then fails on success.
-    if [[ "$(strings -a "$f" | grep -c -- "$m" || true)" -eq 0 ]]; then
-      echo "::error:: $f has no '$m' marker — stock build?"; ok=0
-    fi
-  done
-  [[ $ok -eq 1 ]]
+  # Every patched component carries a marker; a stock one loads perfectly and
+  # behaves as though nothing was ever fixed. The list lives in one place.
+  packaging/verify-tree.sh build/runtime
 }
 
 package() {

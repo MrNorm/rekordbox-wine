@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# install.sh — install the rekordbox-wine package built for the Wine you have.
+# install.sh — install the latest rekordbox-wine release.
 #
 #   curl -fsSL https://raw.githubusercontent.com/MrNorm/rekordbox-wine/master/bin/install.sh | bash
 #
-# Picks the release asset matching your wine-staging version, verifies it
-# against the release's SHA256SUMS, and installs it. The patched libraries are
-# compiled against Wine internals and are valid for one Wine version only, which
-# is why the asset is chosen by version rather than "latest".
-#
-# Falls back to nothing: if no asset matches, it says so and prints the
-# from-source command rather than installing something that cannot work.
+# Takes the release asset that carries its own Wine (named -bundled-wine<ver>),
+# verifies it against the release's SHA256SUMS, and installs it. Since 0.3.0
+# the package ships a pinned, patched Wine, so it works whatever Wine the
+# system has, or none. Assets from before that were built for one system Wine
+# version and are never chosen.
 set -uo pipefail
 
 REPO="${RBW_REPO:-MrNorm/rekordbox-wine}"
@@ -56,8 +54,6 @@ case "$DISTRO" in
          "Build from source: https://github.com/$REPO#build-from-source" ;;
 esac
 
-WINE_PKG="wine-staging"; [[ "$DISTRO" == deb || "$DISTRO" == rpm ]] && WINE_PKG="winehq-staging"
-
 command -v curl >/dev/null && ck "curl" \
   || ckno "curl is missing" "${INSTALL_CMD:-install} curl"
 
@@ -65,26 +61,10 @@ if command -v sudo >/dev/null; then ck "sudo"
 else ckno "sudo is missing — installing the package needs root" \
           "Install sudo, or run the package manager as root yourself"; fi
 
-# Wine, and whether it is a version something was built for.
-WINE_VER=""
-if command -v wine >/dev/null; then
-  WINE_VER="$(wine --version 2>/dev/null | sed 's/^wine-//;s/ .*//')"
-  if [[ -n "$WINE_VER" ]]; then
-    ck "wine $WINE_VER"
-    wine --version 2>/dev/null | grep -qi staging \
-      || ckwarn "this is not wine-staging; every measurement in this project was made on staging"
-  else
-    ckno "'wine --version' produced nothing" "Reinstall Wine: ${INSTALL_CMD:-install} $WINE_PKG"
-  fi
-else
-  ckno "wine is not installed" "${INSTALL_CMD:-install} $WINE_PKG"
-fi
-
-# Disk. The package is small; rekordbox itself is not, and this is the last
-# comfortable moment to say so.
+# Disk. The package carries a whole Wine, and rekordbox itself is large too.
 FREE_MB="$(df -Pm /tmp 2>/dev/null | awk 'NR==2{print $4}')"
-if [[ -n "$FREE_MB" && "$FREE_MB" -lt 200 ]]; then
-  ckno "only ${FREE_MB} MB free on /tmp" "Free some space; the download needs ~200 MB"
+if [[ -n "$FREE_MB" && "$FREE_MB" -lt 600 ]]; then
+  ckno "only ${FREE_MB} MB free on /tmp" "Free some space; the download needs ~600 MB"
 elif [[ -n "$FREE_MB" ]]; then ck "disk space on /tmp (${FREE_MB} MB free)"; fi
 
 if [[ $PROBLEMS -gt 0 ]]; then
@@ -108,12 +88,12 @@ curl -fsSL -o "$TMP/SHA256SUMS" "$SUM_URL" || die "could not fetch SHA256SUMS"
 
 # SHA256SUMS is the authority on WHICH asset to take, not just on its hash.
 # A release can carry more than one package -- a re-run of the release workflow
-# appends a second build -- and picking the first name that matches the Wine
-# version can land on one the checksum file does not cover. Then the only thing
+# appends a second build -- and picking the first name that matches can land
+# on one the checksum file does not cover. Then the only thing
 # standing between a curl|bash and an unverified binary is a warning nobody
 # reads. So: choose from the checksum file, or stop.
 PKG_NAME="$(awk '{sub(/^\*/,"",$2); print $2}' "$TMP/SHA256SUMS" \
-            | grep -F -- "-wine${WINE_VER}.pkg.tar.zst" | head -1)"
+            | grep -E -- '-bundled-wine[0-9.]+\.pkg\.tar\.zst$' | head -1)"
 PKG_URL=""
 [[ -n "$PKG_NAME" ]] && PKG_URL="$(urls | grep -F -- "/$PKG_NAME" | head -1)"
 if [[ -n "$PKG_NAME" && -z "$PKG_URL" ]]; then
@@ -123,12 +103,9 @@ fi
 if [[ -z "$PKG_URL" ]]; then
   cat >&2 <<MSG
 
-No package in $TAG was built for wine $WINE_VER.
-
-The patched Wine components only work with the Wine they were compiled against,
-so installing another build would give you an application that starts and does
-not render. Build against your Wine instead — 20-30 minutes, no root for the
-build itself:
+Release $TAG predates the package that carries its own Wine, and its packages
+only work with the one system Wine they were compiled against. Build the
+current version from source instead (20-60 minutes, no root for the build):
 
   git clone https://github.com/$REPO.git
   cd rekordbox-wine/packaging && makepkg -si

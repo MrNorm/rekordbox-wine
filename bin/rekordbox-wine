@@ -24,51 +24,49 @@ set -uo pipefail
 
 SELF="$(basename "$0")"
 PREFIX_DEFAULT="${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/prefix"
+# The package's own menu item runs us with no RBW_PREFIX. When rekordbox lives
+# in another prefix, that item launched an empty default prefix and did nothing
+# visible (2026-10-08, from the menu: "rekordbox.exe not found"). So remember
+# the prefix rekordbox last started from, and use it when the default prefix
+# has no rekordbox. A user of the default prefix is never affected.
+PREFIX_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/rekordbox-wine/prefix"
+if [[ -z "${RBW_PREFIX:-}" && ! -d "$PREFIX_DEFAULT/drive_c/Program Files/rekordbox" && -r "$PREFIX_FILE" ]]; then
+  _remembered="$(head -1 "$PREFIX_FILE")"
+  [[ -d "$_remembered/drive_c/Program Files/rekordbox" ]] && RBW_PREFIX="$_remembered"
+fi
 export WINEPREFIX="${RBW_PREFIX:-$PREFIX_DEFAULT}"
-# Wine's own dll dirs, where the stock builtins live. Detected rather than
-# hardcoded: Arch, Debian, Fedora and the WineHQ builds all put them somewhere
-# different, and a wrong path here reports as "your Wine is broken".
-# Where the package puts its helpers. Must be resolved BEFORE winepaths.sh is
-# sourced, because the lookup below uses it.
+# Where the package puts its helpers.
 DATADIR="${RBW_DATADIR:-/usr/share/rekordbox-wine}"
 [[ -d "$DATADIR" ]] || DATADIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# winepaths.sh sits beside this script in a source checkout, but the package
-# installs the launcher to /usr/bin and its helpers to /usr/share/rekordbox-wine/bin.
-# Looking only beside ourselves printed "No such file or directory" on every
-# single run of the INSTALLED launcher -- harmless only because detection has a
-# fallback, which is exactly the kind of luck not to depend on.
-for _wp in "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/winepaths.sh" \
-           "$DATADIR/bin/winepaths.sh" \
-           /usr/share/rekordbox-wine/bin/winepaths.sh; do
-  [[ -r "$_wp" ]] && { . "$_wp"; break; }
-done
-if [[ -z "${WINE_PE_DIR:-}" ]]; then
-  echo "rekordbox-wine: cannot find winepaths.sh — is the package installed correctly?" >&2
-  exit 1
+# THE WINE RUNTIME. rekordbox runs on a complete, pinned Wine that ships inside
+# this package, with every fix compiled in, at /usr/lib/rekordbox-wine/wine.
+# The distro's Wine is never used, so a system update that moves it cannot
+# break rekordbox. Before 2026-10-17 the launcher patched the SYSTEM Wine
+# through a private symlink tree, and every Wine upgrade broke rekordbox until
+# the components were rebuilt (THEMES/T14, T15). See THEMES/T19.
+#
+# RBW_RUNTIME overrides it; a source checkout falls back to the runtime that
+# bin/build-wine-runtime.sh staged under build/runtime.
+RUNTIME="${RBW_RUNTIME:-}"
+if [[ -z "$RUNTIME" ]]; then
+  for _rt in /usr/lib/rekordbox-wine/wine "$DATADIR/build/runtime/usr/lib/rekordbox-wine/wine"; do
+    [[ -x "$_rt/bin/wine" ]] && { RUNTIME="$_rt"; break; }
+  done
+  RUNTIME="${RUNTIME:-/usr/lib/rekordbox-wine/wine}"
 fi
-
-# The private Wine tree. Four of our fixes are unix-side libraries and two are
-# PE drivers, none of which DllOverrides can reach -- so they used to replace
-# files in /usr/lib/wine, which are owned by the distro's wine package. That
-# meant a file conflict, silent reversion on every wine upgrade, and, worst of
-# all, it changed the behaviour of EVERY Wine application on the machine.
-# Instead we build a parallel tree of symlinks to the system Wine (about 5 MB)
-# with real patched files in the six places that need them, and run against
-# that. The system Wine is never touched and other applications never see us.
-PRIVATE_WINE="${RBW_PRIVATE_WINE:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/wine}"
-# Where a USER's rebuild lands. The package's own artifacts live under $DATADIR,
-# which is root-owned, and are valid for the one Wine the package was built
-# against. When Wine moves on, build-patched-dlls.sh writes here instead, without
-# root, and everything below looks here first. Must match build-patched-dlls.sh
-# and make-private-wine.sh.
-USER_ART="${RBW_ARTIFACTS:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/artifacts}"
-WINE="$PRIVATE_WINE/bin/wine"
-# The tree mirrors the system's own relative lib path, which differs by distro
-# (Arch lib/wine, Debian lib/<triplet>/wine, Fedora lib64/wine). It records
-# which one it used; never guess it here.
-PW_LIB="$(cat "$PRIVATE_WINE/.wine-layout" 2>/dev/null || echo lib/wine)"
-# Installed by the package; overridable for running out of a source checkout.
+WINE="$RUNTIME/bin/wine"
+RT_LIB="$RUNTIME/lib/wine"
+# Everything this script starts -- rbclean.sh's `wineserver -k` included --
+# must reach THIS Wine. A system wineserver speaks a different protocol the
+# moment the distro moves Wine on.
+export WINESERVER="$RUNTIME/bin/wineserver" WINELOADER="$WINE"
+export PATH="$RUNTIME/bin:$PATH"
+# No Wine-generated menu entries. winemenubuilder wrote "rekordbox 7" entries
+# that launched the system Wine (unpatched: one frame, then a freeze), and on
+# 2026-10-08 a probe run's winemenubuilder DELETED the user's working entry
+# (THEMES/T18). The package installs the one menu entry it needs.
+export WINEDLLOVERRIDES="winemenubuilder.exe=d${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
 
 # Locates the installer downloader, wherever this is running from.
 rbw_fetcher() {
@@ -80,6 +78,30 @@ rbw_fetcher() {
   done
   return 1
 }
+
+# A menu launch has no terminal, so everything below -- every check, and Wine's
+# own crash reports, which print even under WINEDEBUG=-all -- used to go
+# nowhere. On 2026-10-08 the process hosting winebus/wineusb crashed in a menu
+# launch (sc query: exit 1067) and the evidence could not be recovered. See T17.
+#
+# LAUNCHES only, one file each, newest five kept. The first version rotated a
+# single launch.log on ANY terminal-less run: two `--check`s from a script then
+# pushed a running session's log out of existence while rekordbox was still
+# writing to it -- destroying exactly the evidence it was added to keep.
+case "${1:-}" in
+  --check|--fetch|--setup|--install) ;;
+  *)
+    if [[ ! -t 1 ]]; then
+      _logdir="${XDG_STATE_HOME:-$HOME/.local/state}/rekordbox-wine"
+      if mkdir -p "$_logdir" 2>/dev/null; then
+        _log="$_logdir/launch-$(date +%Y-%m-%dT%H:%M:%S).log"
+        exec >"$_log" 2>&1
+        ln -sfn "$(basename "$_log")" "$_logdir/launch.log"
+        ls -1t "$_logdir"/launch-*.log 2>/dev/null | tail -n +6 | xargs -r rm -f
+        echo "rekordbox-wine launch $(date -Is) args: $*"
+      fi
+    fi ;;
+esac
 
 MODE=launch
 INSTALLER=
@@ -180,15 +202,24 @@ reg_get() { # reg_get <section-with-single-backslashes> <key>
     }' "$f" | tr -d '\r'
 }
 reg_set() { # reg_set <section> <key> <value> — only ever called outside --check
-  WINEDEBUG=-all wine reg add "HKCU\\$1" /v "$2" /d "$3" /f >/dev/null 2>&1
+  WINEDEBUG=-all "$WINE" reg add "HKCU\\$1" /v "$2" /d "$3" /f >/dev/null 2>&1
+}
+reg_del() { # reg_del <section> <key>
+  WINEDEBUG=-all "$WINE" reg delete "HKCU\\$1" /v "$2" /f >/dev/null 2>&1
 }
 
 # ---------------------------------------------------------------- prerequisites
 hdr "Prerequisites"
 
-command -v wine >/dev/null || { bad "wine is not installed"; exit 1; }
-WINE_VER="$(wine --version 2>/dev/null | sed 's/^wine-//;s/ .*//')"
-ok "wine $WINE_VER"
+if [[ ! -x "$WINE" ]]; then
+  bad "no Wine runtime at $RUNTIME"
+  note "It ships inside the rekordbox-wine package; reinstall the package."
+  desktop_tell "rekordbox was not started" "Its Wine runtime is missing from $RUNTIME. Reinstall the rekordbox-wine package."
+  exit 1
+fi
+WINE_VER="$(sed -n 's/^wine=//p' "$RUNTIME/.rbw-runtime" 2>/dev/null)"
+WINE_VER="${WINE_VER:-$("$WINE" --version 2>/dev/null | sed 's/^wine-//;s/ .*//')}"
+ok "wine $WINE_VER, the package's own runtime ($RUNTIME) — the system Wine is not used"
 
 if [[ ! -d "$WINEPREFIX" ]]; then
   if [[ $MODE == check ]]; then
@@ -196,94 +227,133 @@ if [[ ! -d "$WINEPREFIX" ]]; then
   else
     warn "creating prefix at $WINEPREFIX (first run, takes a minute)"
     mkdir -p "$WINEPREFIX"
-    WINEDEBUG=-all wineboot -u >/dev/null 2>&1
+    WINEDEBUG=-all "$WINE" wineboot -u >/dev/null 2>&1
     ok "prefix created"
   fi
 else
   ok "prefix $WINEPREFIX"
 fi
 
-# ------------------------------------------------------------- patched PE DLLs
-# Wine resolves builtin PE DLLs from its OWN dll directory, not from the prefix,
-# and it refuses a `native` override on any file still carrying winebuild's
-# "Wine builtin DLL" marker. So a patched DLL needs BOTH: the file copied into
-# the prefix with that marker blanked, AND a native override registered. Miss
-# either and you silently get stock behaviour.
-hdr "Patched Wine DLLs"
+# ----------------------------------------------------------------- the fixes
+# Every fix is compiled into the runtime, so this is a measurement of the
+# shipped files, not a repair. A file without its marker means a runtime built
+# without the series, which loads fine and behaves as though nothing was fixed:
+# the failure mode this project has paid for most often.
+hdr "Fixes in the Wine runtime"
+check_runtime_file() {   # path under lib/wine, marker, what breaks without it
+  local path="$RT_LIB/$1" marker="$2" cost="$3"
+  local name; name="$(basename "$1")"
+  if [[ ! -f "$path" ]]; then
+    blocker "$name missing from the Wine runtime — $cost"
+  elif [[ "$(strings -a "$path" | grep -c -- "$marker" || true)" -gt 0 ]]; then
+    ok "$name ($marker)"
+  else
+    blocker "$name in the Wine runtime is stock — $cost"
+  fi
+}
+check_runtime_file x86_64-windows/dxgi.dll RBW-PATCH \
+  "IDXGIOutput::WaitForVBlank is missing, so the window paints one frame and freezes (T01)"
+check_runtime_file x86_64-windows/mmdevapi.dll RBW-MMDEV \
+  "no event-driven exclusive-mode audio, so the sample-rate list is empty (T03)"
+check_runtime_file x86_64-windows/setupapi.dll PhysicalDeviceObjectName \
+  "volumes cannot be matched to drive letters, so a USB stick is never found (T02)"
+check_runtime_file x86_64-unix/winealsa.so RBW-EVENT3 \
+  "exclusive streams are refused on roughly every other period, and the DDJ-400 cannot authenticate (T03, T05)"
+check_runtime_file x86_64-unix/winex11.so RBW-POPUP \
+  "the File menu and the view-mode selector never appear, so EXPORT mode is unreachable (T04)"
+check_runtime_file x86_64-unix/mountmgr.so RBW-REMOVABLE \
+  "a USB stick never reports DRIVE_REMOVABLE (T02)"
+check_runtime_file x86_64-windows/mountmgr.sys RBW-VOLNODE \
+  "SetupAPI enumerates no volumes and the USB export panel stays empty (T02)"
+check_runtime_file x86_64-windows/wineusb.sys RBW-USBHCD \
+  "rekordbox cannot open \\\\.\\HCDn, so it rejects the controller and never opens its MIDI port (T05)"
+check_runtime_file x86_64-unix/wineusb.so RBW-USBHCD \
+  "the HCD driver's unix half is missing and the PE half is its only caller (T05)"
 
-declare -A DLL_WHY=(
-  [dxgi]="implements IDXGIOutput::WaitForVBlank — without it any JUCE app driving repaints from VBlankAttachment paints one frame and freezes (T01)"
-  [mmdevapi]="allows event-driven exclusive-mode audio — without it the sample-rate list is empty (T03)"
-  [setupapi]="reports SPDRP_PHYSICAL_DEVICE_OBJECT_NAME, which was a NULL placeholder — without it an application cannot match an enumerated volume to a drive letter, so a USB stick can never be found (T02)"
-)
-# A marker must be a string the PATCH introduces and stock does NOT have.
-#
-# `winmm` deliberately has none. Patch 0007's PE half plants no RBW string, and
-# the marker originally used here was "midiInMessage" -- an exported symbol
-# present in the stock builtin (measured: 2 hits in
-# /usr/lib/wine/x86_64-windows/winmm.dll). That check could never fail, which is
-# worse than no check: it reported a stock DLL as patched. Detection for winmm
-# therefore rests entirely on the byte-compare against the artifact above.
-#
-# cfgmgr32 and winmm were REMOVED from the series on 2026-08-17 with the
-# evidence recorded in PACKAGE.md -- cfgmgr32 was never loaded at all (RBW-CFGMGR
-# appears in no run log), and the winmm work was measured unnecessary once the
-# HCD driver landed. They stayed in this list afterwards, which meant the
-# launcher demanded two artifacts that nothing builds any more and reported a
-# correctly installed system as broken.
-declare -A DLL_MARKER=(
-  [dxgi]="RBW-PATCH"
-  [mmdevapi]="RBW-MMDEV"
-  [setupapi]="PhysicalDeviceObjectName"
-)
+# THE ONE THING THE DISTRO CAN STILL TAKE AWAY: the system libraries the
+# runtime loads. A soname bump (libgnutls.so.30 -> .31) would remove HTTPS, or
+# GL, from a working install with no error until the feature is used. The same
+# checker runs from a pacman hook after every transaction, so this normally
+# shows up at update time rather than here.
+_rtc=""
+for _c in "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/rbw-runtime-check" "$DATADIR/bin/rbw-runtime-check"; do
+  [[ -x "$_c" ]] && { _rtc="$_c"; break; }
+done
+if [[ -z "$_rtc" ]]; then
+  warn "rbw-runtime-check not installed; cannot check the runtime's system libraries"
+elif _out="$("$_rtc" "$RUNTIME")"; then
+  ok "every system library the runtime needs is present"
+else
+  while IFS= read -r _l; do [[ -n "$_l" ]] && blocker "$_l"; done <<<"$_out"
+fi
 
-for dll in dxgi mmdevapi setupapi; do
-  art="$DATADIR/artifacts/$dll-patched-native-$WINE_VER.dll"
-  [[ -f "$art" ]] || art="$USER_ART/$dll-patched-native-$WINE_VER.dll"
-  dst="$WINEPREFIX/drive_c/windows/system32/$dll.dll"
-
-  if [[ ! -f "$art" ]]; then
-    # Almost always a Wine upgrade: the artifacts are version-stamped, so a new
-    # Wine has no artifact until one is built for it. The prefix still forces
-    # this DLL to `native`, and the native copy sitting in system32 is the
-    # PREVIOUS Wine's build -- which the new Wine cannot load at all
-    # (status=c0000135). Launching now is guaranteed to fail.
-    blocker "$dll: no artifact for wine $WINE_VER at $art"
-    note "build it with: $DATADIR/bin/build-patched-dlls.sh $dll"
+# ------------------------------------------------------------ prefix overrides
+# Packages before 2026-10-17 put patched PE copies of dxgi, mmdevapi and
+# setupapi into the prefix's system32 and forced them `native`; cfgmgr32 and
+# winmm were forced native in August and never cleaned up. Those copies were
+# built for ONE Wine version. With the fixes now in the runtime's builtins, a
+# leftover native override pins the prefix to a stale binary -- the T14 failure,
+# and the "prefix drift" that rb7 was carrying (two 11.15 DLLs on 11.18, T17).
+# The launcher owns these five overrides: it removes them, and puts the
+# runtime's own builtin back in system32.
+hdr "Prefix DLL overrides"
+_stale=0
+for dll in dxgi mmdevapi setupapi cfgmgr32 winmm; do
+  ov="$(reg_get 'Software\Wine\DllOverrides' "$dll")"
+  [[ -n "$ov" ]] || continue
+  _stale=1
+  if [[ $MODE == check ]]; then
+    bad "$dll is forced to '$ov' — a copy left by an older package; the runtime's builtin carries the fix"
+    note "'$SELF --setup' removes it"
     continue
   fi
-
-  # Compare against the artifact, not against "is a file present" — a prefix
-  # update silently restores the stock builtin over the top and the sizes are
-  # the only cheap tell.
-  if [[ ! -f "$dst" ]] || ! cmp -s "$art" "$dst"; then
-    if [[ $MODE == check ]]; then
-      bad "$dll: prefix copy differs from the patched artifact"
-      continue
-    fi
-    cp -f "$art" "$dst.new" && mv -f "$dst.new" "$dst"
-    warn "$dll: installed patched build"
+  reg_del 'Software\Wine\DllOverrides' "$dll"
+  dst="$WINEPREFIX/drive_c/windows/system32/$dll.dll"
+  if [[ -f "$dst" ]] && ! grep -qa 'Wine builtin DLL' "$dst" && [[ -f "$RT_LIB/x86_64-windows/$dll.dll" ]]; then
+    cp -f "$RT_LIB/x86_64-windows/$dll.dll" "$dst.new" && mv -f "$dst.new" "$dst"
   fi
-
-  # The marker must survive into the installed file, or the patch is not in it.
-  # Where no marker exists (winmm), say so rather than quietly claiming a pass.
-  if [[ -n "${DLL_MARKER[$dll]:-}" ]]; then
-    if ! grep -q "${DLL_MARKER[$dll]}" <(strings -a "$dst"); then
-      bad "$dll: installed file has no ${DLL_MARKER[$dll]} marker"
-      continue
-    fi
-  else
-    note "$dll: no patch marker exists; verified by byte-compare only"
-  fi
-
-  ov="$(reg_get 'Software\Wine\DllOverrides' "$dll")"
-  if [[ "$ov" != native ]]; then
-    if [[ $MODE == check ]]; then bad "$dll: override is '${ov:-unset}', not native"; continue; fi
-    reg_set 'Software\Wine\DllOverrides' "$dll" native
-    warn "$dll: set native override"
-  fi
-  ok "$dll — ${DLL_WHY[$dll]}"
+  warn "$dll: removed the stale '$ov' override; the runtime's patched builtin is used"
 done
+[[ $_stale -eq 0 ]] && ok "no stale native overrides — every fixed DLL comes from the runtime"
+
+# SERVICES WHOSE PROGRAM IS MISSING. Wine 11.17 added lsass.exe and the SamSs
+# service that runs it. Updating an OLDER prefix registers the service but
+# does not place the program -- measured on rb7 and on a copy of it updated
+# with a clean `wineboot -u`; a fresh prefix gets it. Without it every LSA call
+# fails ("Failed to start SamSs service", "Failed to get security packages
+# list") until rekordbox exits. Restore only programs a registered service
+# points at: other Wine programs belong elsewhere in a fresh prefix, so a
+# blanket copy into system32 would be wrong. See THEMES/T20.
+if [[ -r "$WINEPREFIX/system.reg" ]]; then
+  _missing="$(python3 - "$WINEPREFIX" <<'PYEOF'
+import os, re, sys
+p = sys.argv[1]
+s = open(p + "/system.reg", encoding="utf-8", errors="replace").read()
+names = set(re.findall(r'"ImagePath"=str\(2\):"C:\\\\windows\\\\system32\\\\([^"\\ ]+\.exe)', s, re.I))
+for n in sorted(names):
+    if not os.path.exists(os.path.join(p, "drive_c/windows/system32", n)):
+        print(n)
+PYEOF
+)"
+  if [[ -z "$_missing" ]]; then
+    ok "every registered Windows service has its program"
+  else
+    for _exe in $_missing; do
+      _src="$RT_LIB/x86_64-windows/$_exe"
+      if [[ ! -f "$_src" ]]; then
+        warn "service program $_exe is missing from the prefix and not in the runtime either"
+      elif [[ $MODE == check ]]; then
+        bad "service program $_exe is missing from the prefix (Wine's prefix update does not add it)"
+        note "'$SELF --setup' restores it from the runtime"
+      else
+        cp -f "$_src" "$WINEPREFIX/drive_c/windows/system32/$_exe"
+        [[ -d "$WINEPREFIX/drive_c/windows/syswow64" && -f "$RT_LIB/i386-windows/$_exe" && ! -e "$WINEPREFIX/drive_c/windows/syswow64/$_exe" ]] \
+          && cp -f "$RT_LIB/i386-windows/$_exe" "$WINEPREFIX/drive_c/windows/syswow64/$_exe"
+        warn "restored service program $_exe from the runtime (Wine's prefix update leaves it out)"
+      fi
+    done
+  fi
+fi
 
 # ------------------------------------------------------------------ audio path
 hdr "Audio"
@@ -337,135 +407,6 @@ if command -v pactl >/dev/null 2>&1; then
   fi
 fi
 
-# winealsa.so is a UNIX library, not a PE — it cannot be overridden per-prefix
-# and cannot be shipped in the prefix. It has to replace the system file.
-hdr "Private Wine tree"
-# Built from symlinks to the system Wine plus our six patched files, so the
-# distro's Wine is never modified and no other application is affected. It is
-# tied to one Wine version: after a wine upgrade the symlinks still resolve but
-# the patched files were compiled against the old headers, so rebuild.
-_pw_ver="$(cat "$PRIVATE_WINE/.wine-version" 2>/dev/null || echo none)"
-# What the patched binaries INSIDE the tree were compiled for -- which is not
-# the same question as what the tree was assembled against, and is the one that
-# decides whether Wine can load them. Trees built before 2026-09-02 carry no
-# such stamp; "unknown" is treated as a mismatch below, because unknown is
-# precisely the state the original failure was in.
-_pw_abi="$(cat "$PRIVATE_WINE/.built-for-wine" 2>/dev/null || echo unknown)"
-if [[ ! -x "$WINE" ]]; then
-  if [[ $MODE == check ]]; then
-    bad "no private Wine tree at $PRIVATE_WINE"
-    note "Build it with:  $DATADIR/bin/make-private-wine.sh"
-  else
-    warn "building the private Wine tree (about 5 MB of symlinks)"
-    # make-private-wine.sh picks whichever set of patched libraries -- the
-    # user's rebuild or the package's -- was built for the running Wine.
-    if "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null 2>&1; then
-      ok "private Wine tree built"
-    else
-      blocker "could not build the private Wine tree"
-      note "Run it directly to see why:  $DATADIR/bin/make-private-wine.sh"
-    fi
-  fi
-elif [[ "$_pw_ver" != "$WINE_VER" ]]; then
-  if [[ $MODE == check ]]; then
-    blocker "private Wine tree was built against wine $_pw_ver, system wine is $WINE_VER"
-    note "Rebuild with:  $DATADIR/bin/make-private-wine.sh"
-  else
-    warn "wine changed $_pw_ver -> $WINE_VER; rebuilding the private tree"
-    # The rebuild now REFUSES when the patched binaries were compiled for a
-    # different Wine, instead of quietly assembling a mixed-ABI tree and
-    # stamping it with the system version. That refusal is the whole point, so
-    # it must reach the user: keep the script's own stderr.
-    if "$DATADIR/bin/make-private-wine.sh" "$PRIVATE_WINE" >/dev/null; then
-      ok "private Wine tree rebuilt against wine $WINE_VER"
-    else
-      blocker "the private Wine tree cannot be rebuilt for wine $WINE_VER"
-      note "The patched libraries were built for a different Wine — see above."
-    fi
-  fi
-# The tree can be assembled against the running Wine and still be wrong: what
-# matters is the Wine its patched binaries were COMPILED for. Checking only the
-# first of those is what let a 11.15 winex11.so into an 11.16 tree, answer
-# OpenGL interface 38 to an opengl32 that wanted 39, and take the whole
-# application down while reporting "ok". See THEMES/T14.
-elif [[ "$_pw_abi" != "$WINE_VER" ]]; then
-  blocker "private Wine tree holds libraries built for wine $_pw_abi, but wine is $WINE_VER"
-  note "Wine's internal interfaces are version-locked; these cannot load."
-  note "Rebuild them with:  $DATADIR/bin/build-patched-dlls.sh"
-  note "then:               $DATADIR/bin/make-private-wine.sh"
-else
-  ok "private Wine tree matches system wine $WINE_VER — system Wine untouched"
-fi
-
-RBW_ALSA="$PRIVATE_WINE/$PW_LIB/x86_64-unix/winealsa.so"
-if [[ -f "$RBW_ALSA" ]]; then
-  # Grep for EVERY marker. The old check tested RBW-EVENT alone, and a 0003-only
-  # build -- one of which is sitting in artifacts/winedll/ as a bisect point --
-  # passes that cleanly while missing three later patches.
-  have=$(strings -a "$RBW_ALSA" | grep -o 'RBW-[A-Z]*' | sort -u | tr '\n' ' ')
-  # Require the needed markers to be PRESENT, not to be the complete list. The
-  # old exact-equality test failed the moment a later patch added a marker, and
-  # reported a MORE patched library as "partially patched" — measured: a build
-  # carrying eight RBW markers was flagged as missing the three it had.
-  # The wanted markers must track the CURRENT series (PACKAGE.md), not a
-  # historical one. RBW-MIDIENUM and RBW-MIDIIFACE belonged to patches 0006 and
-  # 0007, which were measured unnecessary and deleted on 2026-08-17 — so this
-  # check was telling a correctly installed system that it was "PARTIALLY
-  # patched", which is exactly the kind of false alarm that sends the next
-  # session chasing a phantom. 0004's MIDI fix plants no RBW- marker; its
-  # signature is the rawmidi TRACE string, so test for that directly.
-  want="RBW-EVENT"
-  missing=""
-  for m in $want; do [[ " $have" == *" $m "* ]] || missing+="$m "; done
-  if ! grep -qa 'sending directly to' "$RBW_ALSA"; then
-    missing+="rawmidi(0004) "
-  fi
-  if [[ -z "$missing" ]]; then
-    ok "winealsa.so patched in the private tree: ${have}plus the 0004 rawmidi MIDI path"
-  elif [[ -n "$have" ]]; then
-    warn "private winealsa.so is PARTIALLY patched: has [${have}], missing [${missing}]"
-    note "patch 0004 (MIDI naming) plants no marker and cannot be detected this way"
-  else
-    bad "private winealsa.so is stock — the controller CANNOT work without it"
-    note "Exclusive event-driven streams get AUDCLNT_E_BUFFER_TOO_LARGE on"
-    note "roughly every other event (measured: 343 refusals in 344 periods),"
-    note "and MIDI ports report as 'DDJ-400 - DDJ-400 MIDI 1' instead of 'DDJ-400'."
-    note "Rebuild with:  $DATADIR/bin/make-private-wine.sh"
-  fi
-fi
-
-# The six files that cannot be overridden per-prefix, checked inside the PRIVATE
-# tree. Each is silent in a different way when it is missing, so each says what
-# it costs rather than just naming a marker.
-check_private_file() {   # relative path under lib/wine, marker, what breaks
-  local rel="$1" marker="$2" cost="$3"
-  local path="$PRIVATE_WINE/$PW_LIB/$rel"
-  local name; name="$(basename "$rel")"
-  [[ -f "$path" ]] || { bad "$name missing from the private Wine tree — $cost"; return; }
-  if [[ "$(strings -a "$path" | grep -c -- "$marker" || true)" -gt 0 ]]; then
-    ok "$name patched in the private tree ($marker)"
-  else
-    bad "$name in the private tree is stock — $cost"
-    note "Rebuild with:  $DATADIR/bin/make-private-wine.sh"
-  fi
-}
-
-check_private_file "x86_64-unix/winex11.so" RBW-POPUP \
-  "the File menu and the view-mode selector never appear, so EXPORT mode is unreachable"
-check_private_file "x86_64-unix/mountmgr.so" RBW-REMOVABLE \
-  "a USB stick never reports DRIVE_REMOVABLE"
-check_private_file "x86_64-windows/mountmgr.sys" RBW-VOLNODE \
-  "SetupAPI enumerates no volumes at all and the USB export panel stays empty"
-
-# wineusb is the controller's gate, and it is TWO files that must match: the PE
-# driver and its unix side. Installing one without the other is worse than
-# installing neither -- wineusb.so gains a unixlib entry point that wineusb.sys
-# is the only caller of.
-check_private_file "x86_64-windows/wineusb.sys" RBW-USBHCD \
-  "rekordbox cannot open \\.\HCDn, so it rejects the controller it just detected and never opens its MIDI port"
-check_private_file "x86_64-unix/wineusb.so" RBW-USBHCD \
-  "the HCD driver's unix half is missing and the PE half is its only caller"
-
 # --------------------------------------------------------- desktop entries
 # When rekordbox's installer runs, Wine writes Start Menu entries of its own
 # into ~/.local/share/applications/wine/Programs/rekordbox/. They are named
@@ -474,7 +415,7 @@ check_private_file "x86_64-unix/wineusb.so" RBW-USBHCD \
 #
 #     Exec=env "WINEPREFIX=..." wine "C:\\...\\rekordbox 7.lnk"
 #
-# That bypasses the private Wine tree and the prefix DLL overrides entirely, so
+# That bypasses the patched Wine runtime entirely, so
 # it starts an unpatched rekordbox: one frame, then a freeze. The user sees two
 # entries in their menu, the obvious one is broken, and the software looks like
 # it does not work.
@@ -824,7 +765,7 @@ if [[ $MODE == install ]]; then
   hdr "Installing rekordbox"
   note "$INSTALLER"
   note "the silent installer still shows ONE language dialog — press Return"
-  if env WINESERVER="$PRIVATE_WINE/bin/wineserver" "$WINE" "$INSTALLER" /S; then
+  if "$WINE" "$INSTALLER" /S; then
     EXE="$(find "$WINEPREFIX/drive_c/Program Files/rekordbox" -maxdepth 2 -name 'rekordbox.exe' 2>/dev/null | sort -V | tail -1)"
     if [[ -n "$EXE" ]]; then
       ok "installed: $EXE"
@@ -853,16 +794,10 @@ if [[ ${#BLOCKERS[@]} -gt 0 ]]; then
   note "rekordbox would start and fail. These must be fixed first:"
   for b in "${BLOCKERS[@]}"; do printf '  \033[31m·\033[0m %s\n' "$b"; done
   echo
-  note "Almost always this means Wine was upgraded and the patched components"
-  note "have not been rebuilt for it. Wine's internals are not stable across"
-  note "releases, so the components are valid for one version only."
-  echo
-  note "Rebuild them (about 20-30 minutes, no root):"
-  note "  $DATADIR/bin/build-patched-dlls.sh"
-  note "  $DATADIR/bin/make-private-wine.sh"
-  echo
-  note "Or install a package built for this Wine, or hold Wine at the version"
-  note "that worked:  IgnorePkg = wine-staging   in /etc/pacman.conf"
+  note "The Wine runtime ships inside the package and no system update can"
+  note "change it, so a failure here means the package itself is damaged or a"
+  note "system library it loads has been removed. Reinstalling the package is"
+  note "the fix for both; the lines above say which."
   echo
   note "Full report:  $SELF --check"
   desktop_tell "rekordbox was not started" \
@@ -875,7 +810,12 @@ EXE="$(find "$WINEPREFIX/drive_c/Program Files/rekordbox" -maxdepth 2 -name 'rek
 if [[ -z "$EXE" ]]; then
   bad "rekordbox.exe not found under $WINEPREFIX/drive_c/Program Files/rekordbox"
   note "install it with: $SELF --install <rekordbox-installer.exe>"
+  desktop_tell "rekordbox is not installed in $WINEPREFIX" \
+    "Install it with: $SELF --install   or start it once with RBW_PREFIX set to the prefix that has it."
   exit 1
+fi
+if [[ $MODE == launch ]]; then
+  mkdir -p "$(dirname "$PREFIX_FILE")" 2>/dev/null && echo "$WINEPREFIX" > "$PREFIX_FILE" 2>/dev/null || true
 fi
 
 hdr "Launching"
@@ -920,4 +860,4 @@ if [[ -n "$RB_VER" && -n "$RB_SUPPORTED" ]]; then
     note "upstream/supported-rekordbox.txt is a one-line contribution."
   fi
 fi
-exec env WINEDEBUG="${WINEDEBUG:--all}" WINESERVER="$PRIVATE_WINE/bin/wineserver" "$WINE" "$EXE" "$@"
+exec env WINEDEBUG="${WINEDEBUG:--all}" "$WINE" "$EXE" "$@"

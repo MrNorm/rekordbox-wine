@@ -1,20 +1,12 @@
 name: release
 
-# Publishes an INSTALLABLE Arch package, so this laptop can go from "git pull"
-# to "pacman -U" without a 25-minute Wine compile.
+# Publishes an INSTALLABLE Arch package, so a machine can go from "git pull"
+# to "pacman -U" without compiling Wine.
 #
-# READ THIS BEFORE TRUSTING A BINARY FROM HERE. The package contains Wine
-# libraries linked against Wine's internals. They are valid for EXACTLY the
-# wine-staging version they were built against and no other — that is the whole
-# lesson of THEMES/T14, where 11.15 libraries in an 11.16 tree produced an
-# application that would not open. So:
-#
-#   * every asset carries the Wine version in its filename;
-#   * the release body states it in the first line;
-#   * the launcher refuses to run a mismatch rather than limping.
-#
-# If your wine-staging is newer than any published asset, build from source:
-#   cd packaging && makepkg -si
+# Since 2026-10-17 the package carries its own pinned Wine runtime
+# (upstream/wine-runtime.conf), so an asset works with ANY system Wine, or none.
+# The pinned Wine version is still in the filename and the release body, as a
+# statement of what is inside rather than a compatibility warning.
 
 on:
   push:
@@ -44,14 +36,11 @@ jobs:
     container:
       image: archlinux:base-devel
       options: --privileged
-    timeout-minutes: 120
+    timeout-minutes: 300
 
     steps:
-      - name: Enable multilib and sync
-        run: |
-          set -euo pipefail
-          printf '[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-          pacman -Syu --noconfirm --needed git wine-staging
+      - name: Sync
+        run: pacman -Syu --noconfirm --needed git
 
       - uses: actions/checkout@v4
         with:
@@ -62,7 +51,8 @@ jobs:
         id: id
         run: |
           set -euo pipefail
-          echo "wine=$(wine --version | sed 's/^wine-//;s/ .*//')" >> "$GITHUB_OUTPUT"
+          . upstream/wine-runtime.conf
+          echo "wine=$WINE_VER" >> "$GITHUB_OUTPUT"
           echo "tag=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Point the PKGBUILD at the tagged commit
@@ -83,16 +73,13 @@ jobs:
           grep -n '^source=' packaging/PKGBUILD
 
       - name: Build the package
-        env:
-          RBW_ALLOW_UNTESTED_WINE: '1'
         run: |
           set -euo pipefail
           useradd -m builder
           chown -R builder:builder .
           echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
           sudo -u builder git config --global --add safe.directory "$PWD"
-          sudo -u builder --preserve-env=RBW_ALLOW_UNTESTED_WINE \
-            bash -c 'cd packaging && makepkg -s --noconfirm --noprogressbar'
+          sudo -u builder bash -c 'cd packaging && makepkg -s --noconfirm --noprogressbar'
 
       - name: The built package must name the tagged commit
         # The whole point of the step above, checked rather than assumed.
@@ -106,7 +93,7 @@ jobs:
             *) echo "::error::package does not name the tagged commit $want"; exit 1 ;;
           esac
 
-      - name: Name the assets after the Wine they are bound to, and checksum them
+      - name: Name the assets after the Wine they carry, and checksum them
         id: assets
         run: |
           set -euo pipefail
@@ -114,8 +101,10 @@ jobs:
           wine_ver='${{ steps.id.outputs.wine }}'
           for f in packaging/*.pkg.tar.zst; do
             base="$(basename "$f" .pkg.tar.zst)"
-            # e.g. rekordbox-wine-git-0.2.0.r12.gabc1234-1-x86_64-wine11.16.pkg.tar.zst
-            cp "$f" "dist/${base}-wine${wine_ver}.pkg.tar.zst"
+            # e.g. rekordbox-wine-git-0.3.0.r300.gabc1234-1-x86_64-bundled-wine11.18.pkg.tar.zst
+            # "bundled" is what bin/install.sh selects on: assets from before
+            # 0.3.0 were named -wine<ver> and needed that exact system Wine.
+            cp "$f" "dist/${base}-bundled-wine${wine_ver}.pkg.tar.zst"
           done
           cd dist && sha256sum *.pkg.tar.zst > SHA256SUMS
           cat SHA256SUMS
@@ -128,39 +117,35 @@ jobs:
             dist/*.pkg.tar.zst
             dist/SHA256SUMS
           body: |
-            **Built against wine-staging ${{ steps.id.outputs.wine }}. It will not work with any other version.**
+            **Carries its own Wine: ${{ steps.id.outputs.wine }} with the wine-staging patchset and every rekordbox fix compiled in.**
 
-            The package ships Wine libraries compiled against Wine's internal
-            interfaces, which change without notice between releases. Installing
-            it under a different wine-staging gives you an application that
-            starts and does not render — so `rekordbox-wine` checks the version
-            on every launch and refuses rather than pretending.
+            rekordbox runs on that Wine, installed at `/usr/lib/rekordbox-wine/wine`.
+            Your system Wine is not used or modified, and upgrading it does not
+            affect rekordbox. You do not need Wine installed at all.
 
             ### Install
 
             ```sh
-            wine --version                       # must say wine-${{ steps.id.outputs.wine }}
             sudo pacman -U rekordbox-wine-*.pkg.tar.zst
-            rekordbox-wine --install /path/to/Install_rekordbox_x64_7_2_*.exe
+            rekordbox-wine --install
             rekordbox-wine
             ```
 
-            ### If your Wine is newer
-
-            Build from source — it compiles the patch series against the Wine
-            you actually have, which takes 20–30 minutes and needs no root:
+            ### Build it yourself instead
 
             ```sh
             git clone https://github.com/MrNorm/rekordbox-wine.git
             cd rekordbox-wine/packaging && makepkg -si
             ```
 
+            That compiles all of Wine: 20-60 minutes depending on the CPU.
+
             ### What this does and does not contain
 
             It does **not** contain rekordbox. rekordbox is proprietary; download
             it from rekordbox.com and sign in with your own AlphaTheta account.
-            This package is the patched Wine components, a udev rule, and a
-            launcher that verifies every one of them before starting.
+            This package is a patched Wine, a udev rule, and a launcher that
+            verifies every fix before starting.
 
             See `docs/GOLD-STATUS.md` for what is measured to work and what is
             not, stated honestly.

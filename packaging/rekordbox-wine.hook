@@ -1,0 +1,18 @@
+# Runs after every pacman transaction: does rekordbox-wine's own Wine runtime
+# still find the system libraries it loads, and has a kernel upgrade just left
+# the controller without its MIDI driver? Silent when both are fine.
+#
+# This hook only CHECKS. It never rebuilds anything and never blocks a
+# transaction: the runtime is pinned inside the package, so there is nothing
+# for a system update to break except the libraries it borrows.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Package
+Target = *
+
+[Action]
+Description = Checking that rekordbox-wine can still start...
+When = PostTransaction
+Exec = /usr/share/rekordbox-wine/bin/rbw-runtime-check --hook

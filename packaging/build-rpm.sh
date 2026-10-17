@@ -5,10 +5,8 @@
 # directory is rekordbox-wine-<version>. This makes one from the working tree
 # and runs rpmbuild against it.
 #
-# Wine: needs the version in upstream/patches/supported-wine.txt. Fedora 43 is
-# the first release that can reach it (own wine 11.0, WineHQ 11.16); on Fedora
-# 41 and 42 the newest WineHQ builds are 10.18 and 11.8, which are too old.
-#   https://gitlab.winehq.org/wine/wine/-/wikis/Fedora
+# Wine: none needed. The package builds and carries its own pinned Wine
+# (upstream/wine-runtime.conf); the build needs mingw64-gcc and mingw32-gcc.
 #
 # Usage: packaging/build-rpm.sh [outdir]
 set -euo pipefail
@@ -25,7 +23,7 @@ VER="$(awk -F'[ \t]+' '/^Version:/{print $2; exit}' packaging/rekordbox-wine.spe
 rpmdev-setuptree
 TARBALL="$HOME/rpmbuild/SOURCES/rekordbox-wine-$VER.tar.gz"
 tar --transform "s,^\.,rekordbox-wine-$VER," \
-    --exclude=.git --exclude=./runs --exclude=./prefixes --exclude=./debian \
+    --exclude=.git --exclude=./runs --exclude=./prefixes --exclude=./debian --exclude=./build --exclude=./artifacts \
     -czf "$TARBALL" .
 echo "source: $TARBALL"
 

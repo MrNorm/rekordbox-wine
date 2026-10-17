@@ -168,7 +168,10 @@ fi
 # which is why WINEPREFIX is exported for this call and nothing else.
 if [[ -n "$WS" ]]; then
   say "  asking wineserver to shut the prefix down"
-  WINEPREFIX="$PREFIX" WINEDEBUG=-all wineserver -k >/dev/null 2>&1
+  # The server of the Wine that STARTED the prefix, which the launcher exports as
+  # WINESERVER (its own runtime). The system's `wineserver` speaks a different
+  # protocol as soon as the distro moves Wine, and `-k` then fails silently.
+  WINEPREFIX="$PREFIX" WINEDEBUG=-all "${WINESERVER:-wineserver}" -k >/dev/null 2>&1
   for _ in $(seq 1 20); do
     mapfile -t PIDS < <(prefix_pids)
     [[ ${#PIDS[@]} -eq 0 ]] && break

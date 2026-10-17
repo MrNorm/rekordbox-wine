@@ -1,6 +1,6 @@
 # T16 — Kernel upgraded without reboot: controller has no MIDI port
 
-**Status:** OPEN (diagnosed; cure is a reboot, verification pending) · **Opened:** 2026-10-07
+**Status:** RESOLVED 2026-10-08. The reboot was a PREREQUISITE, not the whole cure; see T17 · **Opened:** 2026-10-07
 
 ## Symptom
 User, 2026-10-07, with rekordbox 7.2.18 up on wine-staging 11.18 (T15 build):
@@ -48,3 +48,10 @@ After reboot: `aconnect -l | grep DDJ`, then the launcher's
 `ok controller has an ALSA sequencer port` (positive branch not yet observed),
 then rekordbox detects the DDJ-400. That is the first DDJ-400 measurement on
 any Wine after 11.15 (see STATE: never re-measured on 11.16).
+
+## Outcome — 2026-10-08
+After reboot onto 7.2.7: `snd_seq_midi` loaded, `client 24: 'DDJ-400'` present,
+and the launcher's positive branch was observed (`ok controller has an ALSA sequencer port`).
+**But the controller was still not detected.** I had said this theme "fully
+explained" the symptom. That was wrong: it was necessary, not sufficient. The
+remaining failure was a crashed winebus/wineusb host process, which is T17.

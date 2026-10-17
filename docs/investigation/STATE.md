@@ -1,6 +1,54 @@
 # STATE — read this first
 
-## Where things are — 2026-10-07
+## Where things are — 2026-10-17
+
+**The package now carries its own Wine (T19).** The user asked how to stop
+system updates breaking rekordbox, and chose "include wine in the package".
+
+- `bin/build-wine-runtime.sh` builds wine 11.18 + the staging 11.18 patchset +
+  the series + the RBW-USBHCD splice (WoW64, pinned and sha256-checked in
+  `upstream/wine-runtime.conf`) into `/usr/lib/rekordbox-wine/wine`, 607 MB.
+  Staging + series: one fuzzed hunk (0009 h4), reviewed and listed in
+  `upstream/patches/reviewed-fuzz.txt`; any other fuzz fails the build.
+- Launcher: no system-Wine path at all. The fixes are runtime builtins; it
+  removes the native overrides old packages left (rb7 has 5, including the 11.15
+  cfgmgr32/winmm suspected in T17), disables winemenubuilder (T18), restores
+  missing service programs (T20), and blocks on missing system libraries via
+  `bin/rbw-runtime-check`. That checker also runs from a check-only pacman hook.
+- `snd_seq_midi` and `snd_usb_audio` now load at boot (T16). kernel-modules-hook
+  is an optdepend.
+- **Measured on a reflink copy of rb7** (prefixes/rb7-runtime-probe):
+  20261017T1443 window-ok, full UI, every patched library mapped from the
+  runtime, nothing from /usr/lib/wine, wineusb/winebus RUNNING.
+  20261017T1446: lsass restored, SamSs errors 6 → 0, repaints in-session.
+- **NOT measured: the DDJ-400 on the runtime.** It was not plugged in.
+- **T20:** `wineboot -u` on a pre-11.17 prefix registers SamSs but never places
+  lsass.exe. rb7 itself has been in that state since the 11.18 upgrade.
+- Packaging rewritten for all three formats (one marker list:
+  `packaging/verify-tree.sh`). CI workflows rewritten. Installer picks
+  `-bundled-wine*` assets only. Local commits e319a69 and 1320fb3 are **not pushed**.
+  End-to-end makepkg in a clean container: green, 133 MB, verified from inside
+  the package: ~/.cache/rbw-makepkg-out/rekordbox-wine-git-0.3.0.r291.gc006311-1-x86_64.pkg.tar.zst
+- **Installed 2026-10-17 with system Wine removed** (user: "remove existing
+  packages first"): wine-staging, wine-mono, wine-gecko, winetricks and the old
+  0.2.0 package are gone. 20261017T1707-pkg-installed-rb7: window-ok on the real
+  rb7, 0 maps from /usr/lib/wine. The package stands alone.
+- **T21 (new):** with system Wine gone, a NEW prefix stops on a "Wine Mono
+  Installer" download prompt (masked on this machine by ~/.cache/wine). Fix in
+  5a41966: the runtime ships Mono 11.3.0 + Gecko 2.47.4 MSIs, sha256-pinned to
+  the values Wine itself checks. Rebuilt (0.3.0.r295, 325 MB) and installed:
+  fresh prefix, empty cache, no prompt (T21 evidence log).
+- User approved the push, "merge on green". User says the keyboard issue (T18)
+  may be unrelated: deprioritised.
+
+### Next action
+1. Publish branch → PR → CI green → fast-forward origin/master → tag v0.3.0.
+2. The user plugs in the DDJ-400 and confirms jog, pads and LEDs on the runtime.
+
+### Blocked on
+The user: the DDJ hardware test, and whether "Free" is their real plan.
+
+## Where things were — 2026-10-07
 
 **Wine 11.18 builds and runs. The rebuild path a packaged user is told to take
 was broken, and is now fixed. The controller is not detected, and that is the
@@ -40,7 +88,26 @@ kernel, not Wine.**
   The negative GLX path (a winex11.so without GLX) was not exercised; only the
   positive path was.
 
+**2026-10-08 update:** the reboot fixed T16, but the controller was still missing.
+The winebus/wineusb host process had crashed (exit 1067) in the first menu launch,
+which is T17. A logged relaunch worked: rekordbox opened the DDJ-400 MIDI port.
+The crash is not reproduced. Menu launches now log to ~/.local/state/rekordbox-wine/launch.log.
+
+**2026-10-08 evening:** the user reported the keyboard dead and menu launches broken. Menu: my
+T17 graft probe let winemenubuilder delete the rb7 entry. Restored and verified via
+kioclient exec, controller connected. Keyboard: undiagnosed (T18). Launcher source fixes
+(remembered prefix, launch-only logs, not-found notification) are committed, NOT installed:
+installing runs the udev-reload hook, a keyboard suspect.
+
 ### Next action
+Ask the user when and how the keyboard failed (system-wide or only in rekordbox; which keyboard;
+before or after the 18:34 suspend). Then decide whether installing the package is safe.
+
+### (older) Next action
+User confirms jog/faders/pads/LEDs on the current session. If the controller is
+ever missing again: `wine sc query wineusb` (1067?) plus launch.log (T17).
+
+### (superseded) Next action
 Reboot (user). Then `aconnect -l | grep DDJ` and `rekordbox-wine --check`,
 expecting `ok controller has an ALSA sequencer port`, then a DDJ-400 pass on
 11.18 (jog, faders, pads, LEDs). This is the first controller measurement since 11.15.
@@ -1351,6 +1418,12 @@ error anywhere in a 1.2M-line log.
   reproducing automatically: run `20260813T062324-rb7-stale-surface-confirm`.
 
 ## Active themes
+
+- `docs/investigation/THEMES/T18-harness-side-effects.md`: **OPEN 2026-10-08.** My probes deleted
+  the user's menu entry (repaired); the keyboard failure is undiagnosed. Read its rules before probing.
+
+- `docs/investigation/THEMES/T17-bus-driver-crash.md`: **OPEN 2026-10-08.** The bus-driver host
+  crashed once in a menu launch. Not reproduced; launch logging added.
 
 - `docs/investigation/THEMES/T16-kernel-upgrade-no-midi-port.md`: **OPEN 2026-10-07.** No DDJ
   sequencer port after a kernel upgrade without reboot. Cure is a reboot; verify after.

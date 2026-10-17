@@ -2,7 +2,8 @@
 set -e
 if [ "$1" = configure ]; then
   cat <<'MSG'
-rekordbox-wine is installed. It does NOT modify your system Wine.
+rekordbox-wine is installed. It runs rekordbox on its own Wine, in
+/usr/lib/rekordbox-wine/wine, and never uses or modifies your system Wine.
 
 Two commands, then you are done. Neither needs root.
 
@@ -18,10 +19,10 @@ Two commands, then you are done. Neither needs root.
 
        rekordbox-wine
 
-That is the whole setup. The launcher builds its private Wine tree, installs
-the patched DLLs into the prefix, applies the audio settings and corrects
-Wine's own menu entry -- every time it starts, so it repairs itself if
-something drifts. You can also start it from your application menu.
+That is the whole setup. The launcher checks its Wine, cleans stale settings
+out of the prefix and applies the audio settings every time it starts, so it
+repairs itself if something drifts. You can also start it from your
+application menu ("rekordbox (Wine)").
 
 USING A DDJ-400? Two one-off system steps, because they need root or a replug:
 
@@ -35,7 +36,7 @@ USING A DDJ-400? Two one-off system steps, because they need root or a replug:
 
 UPDATES: nothing to do.
   - rekordbox updates itself: the launcher always starts the newest version.
-  - Your distribution updates Wine: the private tree is rebuilt automatically.
+  - Your distribution updates Wine: nothing changes. rekordbox does not use it.
 
 VERIFY ANYTHING:
        rekordbox-wine --check                          report, change nothing

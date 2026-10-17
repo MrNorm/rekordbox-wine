@@ -6,16 +6,11 @@ name: packages
 # Debian or Fedora -- the README said so. Untested packaging is a claim, not a
 # fact, and this project has already paid once for the difference (THEMES/T14).
 #
-# WHICH DISTRIBUTIONS, AND WHY THESE VERSIONS. The patch series targets one Wine
-# (upstream/patches/supported-wine.txt), so a distribution can only be supported
-# if it can actually install that Wine:
-#
-#   Debian trixie  own wine 10.0   + WineHQ repo -> 11.16   supported
-#   Fedora 43      own wine 11.0   + WineHQ repo -> 11.16   supported
-#   Fedora 42      own wine 10.20  + WineHQ repo -> 11.8    too old
-#   Fedora 41      own wine 10.15  + WineHQ repo -> 10.18   too old
-#
-# Measured 2026-09-02, not assumed.
+# Since 2026-10-17 each package builds and carries its own pinned Wine
+# (upstream/wine-runtime.conf), so a distribution no longer has to be able to
+# install that Wine itself, and the WineHQ repositories are not needed. What a
+# distribution must supply is a mingw-w64 cross compiler for the build and the
+# system libraries the runtime loads.
 
 on:
   push:
@@ -24,6 +19,7 @@ on:
       - 'packaging/**'
       - 'bin/**'
       - 'upstream/patches/**'
+      - 'upstream/wine-runtime.conf'
       - '.github/workflows/packages.yml'
   pull_request:
     paths:
@@ -54,92 +50,62 @@ jobs:
     container:
       image: debian:trixie
       options: --privileged
-    timeout-minutes: 120
+    timeout-minutes: 300
     steps:
-      - name: WineHQ repository and build dependencies
+      - name: Build dependencies
         run: |
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update -qq
-          apt-get install -y -qq --no-install-recommends ca-certificates wget gnupg git
-          dpkg --add-architecture i386
-          mkdir -p /etc/apt/keyrings
-          wget -qO /etc/apt/keyrings/winehq-archive.key https://dl.winehq.org/wine-builds/winehq.key
-          wget -qNP /etc/apt/sources.list.d/ https://dl.winehq.org/wine-builds/debian/dists/trixie/winehq-trixie.sources
-          apt-get update -qq
-          apt-get install -y -qq --install-recommends winehq-staging
-          apt-get install -y -qq --no-install-recommends \
-            devscripts debhelper build-essential clang lld python3 curl flex bison unzip \
+          apt-get install -y -qq --no-install-recommends ca-certificates git \
+            devscripts debhelper build-essential python3 curl flex bison autoconf perl \
+            gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 binutils \
             libx11-dev libxext-dev libxrandr-dev libxcomposite-dev libxfixes-dev \
-            libxi-dev libxcursor-dev libasound2-dev libdbus-1-dev libfreetype-dev \
-            libgnutls28-dev libusb-1.0-0-dev libgl-dev libegl-dev
-          wine --version
+            libxi-dev libxcursor-dev libxinerama-dev libxrender-dev libxxf86vm-dev \
+            libxkbcommon-dev libwayland-dev libasound2-dev libpulse-dev libdbus-1-dev \
+            libfreetype-dev libfontconfig-dev libgnutls28-dev libusb-1.0-0-dev \
+            libudev-dev libpcap-dev libgl-dev libegl-dev libvulkan-dev \
+            libgstreamer-plugins-base1.0-dev
 
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Record the Wine being built against
+      - name: Record the pinned Wine
         id: wine
-        run: echo "version=$(wine --version | sed 's/^wine-//;s/ .*//')" >> "$GITHUB_OUTPUT"
+        run: . upstream/wine-runtime.conf && echo "version=$WINE_VER" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        env:
-          RBW_ALLOW_UNTESTED_WINE: '1'
         run: |
           set -euo pipefail
           git config --global --add safe.directory "$PWD"
           # build-deb.sh stages packaging/debian to ./debian first --
-          # dpkg-buildpackage requires debian/ at the source root, and without
-          # that step it stops at "cannot open file debian/changelog", which is
-          # exactly how this packaging sat unbuilt.
+          # dpkg-buildpackage requires debian/ at the source root.
           # Into dist/ inside the workspace: upload-artifact rejects any path
           # containing '..', and dpkg writes beside the source tree by default.
           packaging/build-deb.sh dist
 
-      - name: The .deb must contain the patches
-        # Same claim as the Arch job: markers in the files that ended up inside
-        # the package, not in the build tree.
+      - name: The .deb must contain the patched runtime
+        # Markers in the files that ended up inside the package, not in the
+        # build tree. Same list as every other job: packaging/verify-tree.sh.
         run: |
           set -euo pipefail
           deb="$(ls dist/rekordbox-wine_*.deb | head -1)"
-          echo "inspecting $deb"
+          echo "inspecting $deb ($(du -h "$deb" | cut -f1))"
           mkdir -p /tmp/x && dpkg-deb -x "$deb" /tmp/x
-          ver='${{ steps.wine.outputs.version }}'
-          fail=0
-          ck() {
-            local f="/tmp/x/$1" m="$2"
-            [[ -f "$f" ]] || { echo "::error::missing from package: $1"; fail=1; return; }
-            [[ "$(strings -a "$f" | grep -c -- "$m" || true)" -gt 0 ]] \
-              && echo "  ok  $1 ($m)" || { echo "::error::$1 has no '$m'"; fail=1; }
-          }
-          ck "usr/share/rekordbox-wine/artifacts/dxgi-patched-native-$ver.dll" RBW-PATCH
-          ck "usr/share/rekordbox-wine/artifacts/mmdevapi-patched-native-$ver.dll" RBW-MMDEV
-          ck "usr/share/rekordbox-wine/artifacts/setupapi-patched-native-$ver.dll" PhysicalDeviceObjectName
-          ck "usr/share/rekordbox-wine/winedll/winealsa.so"  RBW-EVENT3
-          ck "usr/share/rekordbox-wine/winedll/winex11.so"   RBW-POPUP
-          ck "usr/share/rekordbox-wine/winedll/mountmgr.so"  RBW-REMOVABLE
-          ck "usr/share/rekordbox-wine/winedll/mountmgr.sys" RBW-VOLNODE
-          ck "usr/share/rekordbox-wine/winedll/wineusb.so"   RBW-USBHCD
-          [[ -f /tmp/x/usr/share/rekordbox-wine/winedll/.built-for-wine ]] \
-            && [[ "$(cat /tmp/x/usr/share/rekordbox-wine/winedll/.built-for-wine)" == "$ver" ]] \
-            && echo "  ok  .built-for-wine = $ver" \
-            || { echo "::error::.built-for-wine missing or wrong"; fail=1; }
-          exit $fail
+          packaging/verify-tree.sh /tmp/x
 
       - name: Install it, and run the launcher's checker
-        # The dependency solver is the point here: winehq-staging declares
-        # `Provides: wine` UNVERSIONED, so a `wine (>= 11.0)` dependency is
-        # unsatisfiable on exactly the configuration this project requires.
-        # Installing for real is the only way that gets caught.
+        # Installing for real is what proves the Depends line resolves.
         run: |
           set -euo pipefail
           apt-get install -y -qq ./dist/rekordbox-wine_*.deb
+          /usr/share/rekordbox-wine/bin/rbw-runtime-check
           useradd -m tester
           out=$(runuser -u tester -- rekordbox-wine --check 2>&1 || true)
           echo "$out"
-          ver='${{ steps.wine.outputs.version }}'
-          echo "$out" | grep -q "no artifact for wine $ver" && { echo "::error::no artifact for its own Wine"; exit 1; } || true
-          echo "$out" | grep -q "libraries built for wine" && { echo "::error::ABI mismatch in its own package"; exit 1; } || true
+          if echo "$out" | grep -qE "no Wine runtime|from the Wine runtime|in the Wine runtime is stock|system library .* is missing"; then
+            echo "::error::the installed launcher rejects its own runtime"; exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
@@ -150,71 +116,57 @@ jobs:
   rpm:
     runs-on: ubuntu-latest
     container:
-      image: fedora:43        # F41/F42 cannot get Wine 11.16; see the header
+      image: fedora:43
       options: --privileged
-    timeout-minutes: 120
+    timeout-minutes: 300
     steps:
-      - name: WineHQ repository and build dependencies
+      - name: Build dependencies
         run: |
           set -euo pipefail
-          dnf -y install dnf-plugins-core rpm-build rpmdevtools git tar >/dev/null
-          dnf config-manager addrepo --from-repofile=https://dl.winehq.org/wine-builds/fedora/43/winehq.repo
-          dnf -y install winehq-staging >/dev/null
-          dnf -y install clang lld python3 curl flex bison unzip binutils \
+          dnf -y install dnf-plugins-core rpm-build rpmdevtools git tar binutils cpio >/dev/null
+          dnf -y install python3 curl flex bison autoconf perl mingw64-gcc mingw32-gcc \
             libX11-devel libXext-devel libXrandr-devel libXcomposite-devel \
-            libXfixes-devel libXi-devel libXcursor-devel \
-            alsa-lib-devel dbus-devel freetype-devel gnutls-devel libusb1-devel libglvnd-devel >/dev/null
-          wine --version
+            libXfixes-devel libXi-devel libXcursor-devel libXinerama-devel \
+            libXrender-devel libXxf86vm-devel libxkbcommon-devel wayland-devel \
+            alsa-lib-devel pulseaudio-libs-devel dbus-devel freetype-devel \
+            fontconfig-devel gnutls-devel libusb1-devel systemd-devel libpcap-devel \
+            libglvnd-devel mesa-libEGL-devel vulkan-headers vulkan-loader-devel \
+            gstreamer1-plugins-base-devel >/dev/null
 
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
 
-      - name: Record the Wine being built against
+      - name: Record the pinned Wine
         id: wine
-        run: echo "version=$(wine --version | sed 's/^wine-//;s/ .*//')" >> "$GITHUB_OUTPUT"
+        run: . upstream/wine-runtime.conf && echo "version=$WINE_VER" >> "$GITHUB_OUTPUT"
 
       - name: Build
-        env:
-          RBW_ALLOW_UNTESTED_WINE: '1'
         run: |
           set -euo pipefail
           git config --global --add safe.directory "$PWD"
           packaging/build-rpm.sh dist
 
-      - name: The .rpm must contain the patches
+      - name: The .rpm must contain the patched runtime
         run: |
           set -euo pipefail
           # Absolute: the subshell below cds into /tmp/x, and a relative
-          # dist/... path stops resolving the moment it does. rpm2archive then
-          # says "No such file or directory" and cpio reports a premature end of
-          # archive, which reads like a corrupt package rather than a bad path.
-          rpm_file="$(readlink -f "$(ls dist/rekordbox-wine-*.rpm | head -1)")"
-          echo "inspecting $rpm_file"
+          # dist/... path stops resolving the moment it does.
+          rpm_file="$(readlink -f "$(ls dist/rekordbox-wine-*.rpm | grep -v src.rpm | head -1)")"
+          echo "inspecting $rpm_file ($(du -h "$rpm_file" | cut -f1))"
           mkdir -p /tmp/x && (cd /tmp/x && rpm2cpio "$rpm_file" | cpio -idm --quiet)
-          ver='${{ steps.wine.outputs.version }}'
-          fail=0
-          ck() {
-            local f="/tmp/x/$1" m="$2"
-            [[ -f "$f" ]] || { echo "::error::missing from package: $1"; fail=1; return; }
-            [[ "$(strings -a "$f" | grep -c -- "$m" || true)" -gt 0 ]] \
-              && echo "  ok  $1 ($m)" || { echo "::error::$1 has no '$m'"; fail=1; }
-          }
-          ck "usr/share/rekordbox-wine/artifacts/dxgi-patched-native-$ver.dll" RBW-PATCH
-          ck "usr/share/rekordbox-wine/artifacts/mmdevapi-patched-native-$ver.dll" RBW-MMDEV
-          ck "usr/share/rekordbox-wine/winedll/winealsa.so"  RBW-EVENT3
-          ck "usr/share/rekordbox-wine/winedll/winex11.so"   RBW-POPUP
-          ck "usr/share/rekordbox-wine/winedll/wineusb.so"   RBW-USBHCD
-          exit $fail
+          packaging/verify-tree.sh /tmp/x
 
       - name: Install it, and run the launcher's checker
         run: |
           set -euo pipefail
-          dnf -y install "$(ls dist/rekordbox-wine-*.rpm | head -1)"
+          dnf -y install "$(ls dist/rekordbox-wine-*.rpm | grep -v src.rpm | head -1)"
+          /usr/share/rekordbox-wine/bin/rbw-runtime-check
           useradd -m tester
           out=$(runuser -u tester -- rekordbox-wine --check 2>&1 || true)
           echo "$out"
-          ver='${{ steps.wine.outputs.version }}'
-          echo "$out" | grep -q "no artifact for wine $ver" && { echo "::error::no artifact for its own Wine"; exit 1; } || true
+          if echo "$out" | grep -qE "no Wine runtime|from the Wine runtime|in the Wine runtime is stock|system library .* is missing"; then
+            echo "::error::the installed launcher rejects its own runtime"; exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:

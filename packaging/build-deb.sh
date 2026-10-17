@@ -7,9 +7,8 @@
 # build. Without this step dpkg-buildpackage stops at
 # "cannot open file debian/changelog", which is how these files sat unbuilt.
 #
-# Wine: needs the version in upstream/patches/supported-wine.txt. Debian's own
-# wine is too old (trixie ships 10.0); use the WineHQ repository:
-#   https://gitlab.winehq.org/wine/wine/-/wikis/Debian-Ubuntu
+# Wine: none needed. The package builds and carries its own pinned Wine
+# (upstream/wine-runtime.conf); the build needs gcc-mingw-w64-x86-64 and -i686.
 #
 # Usage: packaging/build-deb.sh [outdir]     (default: ../ , as dpkg does)
 set -euo pipefail

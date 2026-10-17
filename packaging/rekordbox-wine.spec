@@ -2,40 +2,47 @@
 # ntdll's hand-written syscall dispatcher references from assembly, and the
 # build dies with "undefined reference to init_syscall_frame".
 %global _lto_cflags %{nil}
-# The payload is prebuilt Wine libraries (PE and unix) for one Wine version.
-# Stripping them, or letting the shlib scanner generate dependencies from them,
-# has no useful meaning here.
+# The payload includes a whole Wine runtime whose PE half is not ELF;
+# build-wine-runtime.sh strips the unix half itself. Requires are listed by
+# hand below: the dependency generator would demand Wine's own private
+# libraries (ntdll.so), and most system libraries are dlopen()ed by soname,
+# which it cannot see.
 %global __os_install_post %{nil}
 %global debug_package %{nil}
-%global __requires_exclude ^lib(wine|pipewire|asound).*$
+AutoReqProv:    no
 
 Name:           rekordbox-wine
-Version:        0.2.0
+Version:        0.3.0
 Release:        1%{?dist}
-Summary:        Wine fixes and launcher for running rekordbox 7.2.x with a DDJ-400
+Summary:        rekordbox 7.2.x with a DDJ-400 on Linux, on its own patched Wine
 
 License:        LGPL-2.1-or-later AND MIT
 URL:            https://github.com/MrNorm/rekordbox-wine
 Source0:        %{name}-%{version}.tar.gz
 ExclusiveArch:  x86_64
 
-BuildRequires:  clang lld python3 curl flex bison
+BuildRequires:  python3 curl flex bison autoconf perl mingw64-gcc mingw32-gcc
 BuildRequires:  libX11-devel libXext-devel libXrandr-devel libXcomposite-devel
-BuildRequires:  libXfixes-devel libXi-devel libXcursor-devel
-BuildRequires:  alsa-lib-devel dbus-devel freetype-devel gnutls-devel libusb1-devel
-BuildRequires:  libglvnd-devel
+BuildRequires:  libXfixes-devel libXi-devel libXcursor-devel libXinerama-devel
+BuildRequires:  libXrender-devel libXxf86vm-devel libxkbcommon-devel wayland-devel
+BuildRequires:  alsa-lib-devel pulseaudio-libs-devel dbus-devel freetype-devel
+BuildRequires:  fontconfig-devel gnutls-devel libusb1-devel systemd-devel libpcap-devel
+BuildRequires:  libglvnd-devel mesa-libEGL-devel vulkan-headers vulkan-loader-devel
+BuildRequires:  gstreamer1-plugins-base-devel
 
-# Fedora 43's own wine is 11.0 and WineHQ's F43 repo carries 11.16; F41/F42 top
-# out at 10.18, too old for this patch series. The dependency is deliberately
-# loose -- the launcher checks the exact version at runtime and refuses if it
-# does not match what the components were built against.
-Requires:       (winehq-staging or wine)
-Requires:       alsa-lib alsa-utils python3
+# No wine package: this one carries its own at /usr/lib/rekordbox-wine/wine.
+# These are the system libraries that runtime links or dlopen()s for the
+# capabilities rekordbox uses; bin/rbw-runtime-check verifies them on launch.
+Requires:       gnutls libglvnd-glx libglvnd-egl libX11 libXext libXi libXrandr
+Requires:       libXrender libXcursor libXcomposite libXinerama libXfixes libXxf86vm
+Requires:       libxkbcommon libwayland-client freetype fontconfig dbus-libs
+Requires:       alsa-lib libusb1 systemd-libs alsa-utils python3
 Recommends:     rtkit
-Suggests:       pipewire-alsa wine-mono wine-gecko
+Suggests:       pipewire-alsa
 
 %description
-Patched Wine components and a launcher that verifies every one of them before
+A pinned Wine (11.18 with the wine-staging patchset) with the fixes rekordbox
+needs compiled in, and a launcher that verifies every one of them before
 starting rekordbox. This package does NOT contain rekordbox itself, which is
 proprietary and must be downloaded from rekordbox.com.
 
@@ -43,10 +50,8 @@ Ten Wine defects are fixed, without which the application paints a single frame
 and freezes, has no working audio device, cannot open its File menu, cannot see
 a USB stick, and rejects the controller it has just detected.
 
-Four of the fixes are unix-side Wine libraries that cannot be overridden from
-inside a prefix. They are installed to %{_datadir}/%{name}/winedll and applied
-by a separate script, because overwriting files owned by the wine package would
-be a file conflict and would be undone by every wine upgrade.
+The Wine lives in /usr/lib/rekordbox-wine/wine. The distribution's Wine is
+neither used nor modified, so a Wine upgrade cannot break rekordbox.
 
 %prep
 %autosetup
@@ -55,46 +60,25 @@ be a file conflict and would be undone by every wine upgrade.
 cd %{_builddir}/%{name}-%{version}
 # Build inside the rpm build tree, never a developer's ~/.cache, which carries
 # diagnostic code on top of the patch series.
-#
-# --define "reuse_artifacts 1" skips the Wine compile and packages the existing
-# artifacts/ instead. %check still verifies every marker, so this cannot ship a
-# stock component -- it only avoids recompiling Wine once per package format.
-%if 0%{?reuse_artifacts}
-echo "reuse_artifacts: skipping the Wine build, %%check still verifies markers"
-%else
 export RBW_WINE_BUILD="%{_builddir}/wine-build"
-./bin/build-patched-dlls.sh
-%endif
+unset CFLAGS CXXFLAGS LDFLAGS
+./bin/build-wine-runtime.sh build/runtime
 
 %install
 cd %{_builddir}/%{name}-%{version}
-packaging/install-tree.sh %{buildroot}
+# No pacman here, so no alpm hook.
+RBW_ALPM_HOOK=0 packaging/install-tree.sh %{buildroot}
 
 %check
 cd %{_builddir}/%{name}-%{version}
-# Every patched component carries a marker. A missing marker means the build
-# silently produced a stock component, which loads perfectly and behaves as
-# though nothing was fixed.
-set -e
-wine_ver=$(wine --version | sed 's/^wine-//;s/ .*//')
-for spec in \
-  "artifacts/dxgi-patched-native-${wine_ver}.dll:RBW-PATCH" \
-  "artifacts/mmdevapi-patched-native-${wine_ver}.dll:RBW-MMDEV" \
-  "artifacts/setupapi-patched-native-${wine_ver}.dll:PhysicalDeviceObjectName" \
-  "artifacts/winedll/winealsa.so:RBW-EVENT3" \
-  "artifacts/winedll/winex11.so:RBW-POPUP" \
-  "artifacts/winedll/mountmgr.so:RBW-REMOVABLE" \
-  "artifacts/winedll/mountmgr.sys:RBW-VOLNODE" \
-  "artifacts/winedll/wineusb.sys:RBW-USBHCD" \
-  "artifacts/winedll/wineusb.so:RBW-USBHCD" ; do
-  f="${spec%:*}"; m="${spec##*:}"
-  test "$(strings -a "$f" | grep -c -- "$m" || true)" -gt 0 \
-    || { echo "ERROR: $f has no '$m' marker - stock build?"; exit 1; }
-done
+# Every patched component carries a marker; a stock one loads perfectly and
+# behaves as though nothing was fixed. The list lives in one place.
+packaging/verify-tree.sh build/runtime
 
 %post
 cat <<'MSG'
-rekordbox-wine is installed. It does NOT modify your system Wine.
+rekordbox-wine is installed. It runs rekordbox on its own Wine, in
+/usr/lib/rekordbox-wine/wine, and never uses or modifies your system Wine.
 
 Two commands, then you are done. Neither needs root.
 
@@ -110,10 +94,10 @@ Two commands, then you are done. Neither needs root.
 
        rekordbox-wine
 
-That is the whole setup. The launcher builds its private Wine tree, installs
-the patched DLLs into the prefix, applies the audio settings and corrects
-Wine's own menu entry -- every time it starts, so it repairs itself if
-something drifts. You can also start it from your application menu.
+That is the whole setup. The launcher checks its Wine, cleans stale settings
+out of the prefix and applies the audio settings every time it starts, so it
+repairs itself if something drifts. You can also start it from your
+application menu ("rekordbox (Wine)").
 
 USING A DDJ-400? Two one-off system steps, because they need root or a replug:
 
@@ -127,7 +111,7 @@ USING A DDJ-400? Two one-off system steps, because they need root or a replug:
 
 UPDATES: nothing to do.
   - rekordbox updates itself: the launcher always starts the newest version.
-  - Your distribution updates Wine: the private tree is rebuilt automatically.
+  - Your distribution updates Wine: nothing changes. rekordbox does not use it.
 
 VERIFY ANYTHING:
        rekordbox-wine --check                          report, change nothing
@@ -147,6 +131,7 @@ MSG
 
 %files
 %{_bindir}/rekordbox-wine
+/usr/lib/rekordbox-wine/
 %{_datadir}/%{name}/
 %{_datadir}/applications/%{name}.desktop
 /usr/lib/udev/rules.d/60-pioneer-ddj.rules
@@ -155,5 +140,8 @@ MSG
 %doc %{_datadir}/doc/%{name}/
 
 %changelog
+* Sat Oct 17 2026 rekordbox-wine maintainers <nobody@example.invalid> - 0.3.0-1
+- Ship a pinned, patched Wine 11.18-staging runtime instead of patching the
+  system Wine; distribution Wine upgrades no longer affect rekordbox.
 * Thu Aug 20 2026 rekordbox-wine maintainers <nobody@example.invalid> - 0.2.0-1
 - Initial packaging: ten Wine fixes, launcher, udev and module configuration.

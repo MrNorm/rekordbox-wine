@@ -1,0 +1,15 @@
+# Hunks that apply with fuzz on top of wine-staging, each one read and judged
+# harmless. bin/build-wine-runtime.sh fails on ANY fuzz not listed here, because
+# fuzz means GNU patch ignored context lines that no longer match: the "applied
+# into code whose logic changed" case.
+#
+# FORMAT: <patch file name> <GNU patch's own "Hunk #N succeeded ... with fuzz"
+# line, verbatim>. Matched exactly, so a new offset or a different fuzz factor
+# is a new, unreviewed case.
+#
+# 0009 hunk 4, staging 11.18, reviewed 2026-10-17. Staging gives
+# set_mount_point_id() a fourth argument (the drive letter). Those two calls
+# are this hunk's leading context; the added line follows them unchanged:
+#     if (drive) rbw_set_volume_devnode( drive );   /* RBW-VOLNODE */
+# On vanilla 11.18 the same hunk applies with no fuzz.
+0009-mountmgr-volume-devnodes.patch Hunk #4 succeeded at 1157 with fuzz 2 (offset 27 lines).

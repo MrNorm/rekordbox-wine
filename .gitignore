@@ -32,3 +32,6 @@ packaging/*.pkg.tar.zst.sig
 # the repository; these are hand-checked crops with no library, account or
 # filesystem detail in them.
 !docs/images/*.png
+
+# bin/build-wine-runtime.sh stages the vendored Wine here (about 1 GB).
+build/

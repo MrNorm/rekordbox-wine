@@ -3,27 +3,28 @@
 # ntdll's hand-written syscall dispatcher references from assembly and the build
 # dies with "undefined reference to init_syscall_frame".
 export DEB_BUILD_MAINT_OPTIONS = optimize=-lto
-# Build the Wine components inside the build tree, never in a developer's
-# ~/.cache, which carries diagnostic code on top of the patch series.
+# Build inside the build tree, never in a developer's ~/.cache, which carries
+# diagnostic code on top of the patch series.
 export RBW_WINE_BUILD = $(CURDIR)/debian/wine-build
 
 %:
 	dh $@
 
-# RBW_SKIP_WINE_BUILD=1 packages the existing marker-verified artifacts/ rather
-# than recompiling Wine once per package format. dh_auto_test still checks them.
+# The whole pinned Wine runtime (upstream/wine-runtime.conf), with the series.
 override_dh_auto_build:
-	if [ "$$RBW_SKIP_WINE_BUILD" = 1 ]; then \
-	  echo "RBW_SKIP_WINE_BUILD=1: reusing artifacts/"; \
-	else \
-	  ./bin/build-patched-dlls.sh; \
-	fi
+	./bin/build-wine-runtime.sh build/runtime
 
+override_dh_auto_test:
+	packaging/verify-tree.sh build/runtime
+
+# No pacman on Debian, so no alpm hook.
 override_dh_auto_install:
-	packaging/install-tree.sh debian/rekordbox-wine
+	RBW_ALPM_HOOK=0 packaging/install-tree.sh debian/rekordbox-wine
 
-# The payload is prebuilt Wine libraries for a specific Wine version; dh_strip
-# and the shlib scanner have no useful opinion about PE files.
+# build-wine-runtime.sh strips the unix side itself; dh_strip has no business
+# with the PE half. The shlib scanner trips over Wine's own private libraries
+# (ntdll.so), so the system libraries are listed in debian/control instead --
+# most are dlopen()ed by soname and invisible to it anyway.
 override_dh_strip:
 override_dh_shlibdeps:
 override_dh_dwz:

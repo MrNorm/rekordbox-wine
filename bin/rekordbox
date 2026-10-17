@@ -1,36 +1,27 @@
 #!/usr/bin/env bash
-# Launch rekordbox with the patched dxgi.dll loaded.
+# Launch rekordbox for the harness, on the same Wine runtime bin/rekordbox-wine
+# uses, with no launcher checks in the way.
 #
-# Wine takes builtin PE modules from its own dll dir, so the patched build only
-# gets used when it is loaded as *native* — hence the override. Launching
-# without it (e.g. straight from the desktop menu) silently runs the stock stub
-# and the UI renders once and freezes, which looks like a completely different
-# bug and cost us an afternoon.
+# Until 2026-10-17 this copied artifacts/dxgi-patched-native-11.15.dll into the
+# prefix and forced dxgi=n on every harness run, long after the system Wine had
+# moved past 11.15 -- one of the ways rb7 drifted (T17, T19). The fixes are now
+# builtins of the runtime, so nothing is copied and nothing is overridden.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export WINEPREFIX="${WINEPREFIX:-$ROOT/prefixes/rb7}"
-export WINEDLLOVERRIDES="dxgi=n${WINEDLLOVERRIDES:+,$WINEDLLOVERRIDES}"
 # Never hardcode the version: rekordbox updates itself, and a pinned path means
 # the harness silently keeps launching an old build -- or stops working at all.
 # Highest version wins, which is what the shipped launcher does too.
 APP="$(find "$WINEPREFIX/drive_c/Program Files/rekordbox" -maxdepth 2 -name 'rekordbox.exe' 2>/dev/null | sort -V | tail -1)"
 [ -n "$APP" ] || { echo "bin/rekordbox: no rekordbox.exe under $WINEPREFIX" >&2; exit 2; }
 
-want="$ROOT/artifacts/dxgi-patched-native-11.15.dll"
-have="$WINEPREFIX/drive_c/windows/system32/dxgi.dll"
-if [[ -f "$want" ]] && ! cmp -s "$want" "$have"; then
-  echo "installing patched dxgi.dll into the prefix" >&2
-  cp -f "$want" "$have"
-fi
-# Run against the PRIVATE Wine tree, the same one bin/rekordbox-wine uses.
-# Launching with the system `wine` silently gives stock libraries -- measured:
-# an arm started that way produced 21 stream teardowns and no working track,
-# because none of the six unix-side fixes were present. Every measurement taken
-# through this script would otherwise be against unpatched Wine.
-PRIVATE_WINE="${RBW_PRIVATE_WINE:-${XDG_DATA_HOME:-$HOME/.local/share}/rekordbox-wine/wine}"
-[ -x "$PRIVATE_WINE/bin/wine" ] || PRIVATE_WINE="$ROOT/prefixes/privwine"
-if [ ! -x "$PRIVATE_WINE/bin/wine" ]; then
-  echo "bin/rekordbox: no private Wine tree — run bin/make-private-wine.sh" >&2
+RUNTIME="${RBW_RUNTIME:-}"
+for rt in "$RUNTIME" /usr/lib/rekordbox-wine/wine "$ROOT/build/runtime/usr/lib/rekordbox-wine/wine"; do
+  [ -n "$rt" ] && [ -x "$rt/bin/wine" ] && { RUNTIME="$rt"; break; }
+done
+if [ ! -x "${RUNTIME:-/nonexistent}/bin/wine" ]; then
+  echo "bin/rekordbox: no Wine runtime — install the package or run bin/build-wine-runtime.sh build/runtime" >&2
   exit 2
 fi
-exec env WINESERVER="$PRIVATE_WINE/bin/wineserver" "$PRIVATE_WINE/bin/wine" "$APP" "$@"
+export WINEDLLOVERRIDES="winemenubuilder.exe=d${WINEDLLOVERRIDES:+;$WINEDLLOVERRIDES}"
+exec env WINESERVER="$RUNTIME/bin/wineserver" PATH="$RUNTIME/bin:$PATH" "$RUNTIME/bin/wine" "$APP" "$@"

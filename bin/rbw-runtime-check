@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# rbw-runtime-check — can the package's Wine runtime still load on THIS system?
+#
+# The runtime is pinned and nothing outside this package can change its files.
+# What the distro CAN still change is the system libraries those files load.
+# Two ways that breaks, both silent until the feature is used:
+#   1. a library in an ELF NEEDED list disappears (ldd: "not found")
+#   2. a library Wine dlopen()s by exact soname disappears or is bumped
+#      (libgnutls.so.30 -> .31). ldd never sees these; build-wine-runtime.sh
+#      records them in .rbw-sonames.
+# Prints one line per problem and exits 1 if there are any. Silent and exit 0
+# when healthy, because the pacman hook runs it after every transaction.
+#
+# Used by: rekordbox-wine (each line becomes a launch blocker) and the pacman
+# hook /usr/share/libalpm/hooks/rekordbox-wine.hook (--hook adds the
+# kernel-update check, which only matters at update time).
+#
+# Usage: rbw-runtime-check [--hook] [runtime dir, default /usr/lib/rekordbox-wine/wine]
+set -uo pipefail
+HOOK=0
+[[ "${1:-}" == --hook ]] && { HOOK=1; shift; }
+RT="${1:-/usr/lib/rekordbox-wine/wine}"
+problems=()
+
+if [[ ! -x "$RT/bin/wine" ]]; then
+  echo "no Wine runtime at $RT — reinstall rekordbox-wine"
+  exit 1
+fi
+
+# The capabilities rekordbox depends on, by the configure symbol that names
+# the soname. Others in .rbw-sonames (scanners, cameras, printers) are optional.
+declare -A WHY=(
+  [SONAME_LIBGNUTLS]="HTTPS, so signing in to rekordbox fails"
+  [SONAME_LIBGL]="OpenGL, so no window renders"
+  [SONAME_LIBEGL]="OpenGL, so no window renders"
+  [SONAME_LIBX11]="the X11 display connection"
+  [SONAME_LIBXEXT]="X11 extensions the window needs"
+  [SONAME_LIBXI]="keyboard and mouse input"
+  [SONAME_LIBXRANDR]="display mode information"
+  [SONAME_LIBXRENDER]="window rendering"
+  [SONAME_LIBXCURSOR]="the mouse cursor"
+  [SONAME_LIBFREETYPE]="text rendering"
+  [SONAME_LIBFONTCONFIG]="font lookup"
+  [SONAME_LIBDBUS_1]="removable-drive detection (USB export)"
+)
+ldc="$(command -v ldconfig || echo /sbin/ldconfig)"
+cache="$("$ldc" -p 2>/dev/null)"
+if [[ -r "$RT/.rbw-sonames" && -n "$cache" ]]; then
+  while read -r key so; do
+    [[ -n "${WHY[$key]:-}" ]] || continue
+    grep -qE "^[[:space:]]+${so//./\\.} \(.*x86-64" <<<"$cache" \
+      || problems+=("system library $so is missing — the runtime needs it for ${WHY[$key]}")
+  done < "$RT/.rbw-sonames"
+fi
+
+# Linked libraries, for the unix side of the drivers rekordbox uses and the loader.
+for f in "$RT"/lib/wine/x86_64-unix/{ntdll,win32u,winex11,winealsa,wineusb,winebus,mountmgr,opengl32,secur32,bcrypt}.so; do
+  [[ -f "$f" ]] || continue
+  # ntdll.so and win32u.so are Wine's own, loaded by Wine from this directory;
+  # ldd cannot find them and is not meant to.
+  while read -r lib; do
+    problems+=("$(basename "$f") cannot load: $lib not found")
+  done < <(ldd "$f" 2>/dev/null | awk '/not found/ && $1 !~ /^(ntdll|win32u)\.so$/ {print $1}')
+done
+
+if [[ $HOOK -eq 1 ]]; then
+  # A kernel upgrade without a reboot leaves the running kernel with no module
+  # tree, so a controller plugged in afterwards gets no MIDI port (THEMES/T16).
+  # snd_seq_midi and snd_usb_audio are preloaded at boot for exactly this, but
+  # say it here, at the moment it happens, rather than at the next gig.
+  if [[ ! -d "/usr/lib/modules/$(uname -r)" ]]; then
+    lsmod 2>/dev/null | grep -q '^snd_seq_midi' \
+      || problems+=("the kernel was upgraded and snd_seq_midi is not loaded: reboot before using a DDJ controller")
+  fi
+fi
+
+[[ ${#problems[@]} -eq 0 ]] && exit 0
+for p in "${problems[@]}"; do echo "$p"; done
+if [[ $HOOK -eq 1 ]]; then
+  echo "rekordbox-wine will refuse to start until this is fixed. Usually: rebuild or"
+  echo "reinstall rekordbox-wine against the new library."
+fi
+exit 1

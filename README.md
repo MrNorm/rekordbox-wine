@@ -26,9 +26,9 @@ window paints one frame and freezes.
 
 | | |
 |---|---|
-| Distribution | **Arch**, **Debian trixie**, **Fedora 43** — see [Debian and Fedora](#debian-and-fedora) for the Wine each one needs. |
+| Distribution | **Arch**, **Debian trixie**, **Fedora 43**. |
 | Architecture | x86_64 |
-| Wine | **wine-staging**, currently **11.16**. Plain `wine` is untested. |
+| Wine | **None needed.** The package carries its own: wine-staging **11.18** with every fix compiled in, at `/usr/lib/rekordbox-wine/wine`. Your system Wine is not used or touched, and upgrading it cannot break rekordbox. |
 | GPU | Tested on Intel Iris Xe. Nvidia and AMD untested here. |
 | Controller | DDJ-400 for the controller and PC MASTER OUT claims. Other hardware untested. |
 | Root needed | Only to install the package and replug/reboot for the udev and module rules. |
@@ -41,9 +41,8 @@ Arch, one line:
 curl -fsSL https://raw.githubusercontent.com/MrNorm/rekordbox-wine/master/bin/install.sh | bash
 ```
 
-Picks the release built for your wine-staging version, checks it against the
-release's `SHA256SUMS`, and installs it. If no build matches your Wine it stops
-and tells you, rather than installing something that cannot work.
+Downloads the latest release, checks it against the release's `SHA256SUMS`,
+and installs it.
 
 Then:
 
@@ -57,8 +56,8 @@ read it, run it.
 
 ### Build from source
 
-Compiles the Wine components against the Wine you have. 20–30 minutes. Needed if
-no release matches your Wine.
+Compiles the whole pinned Wine with the patches: 20–60 minutes depending on the
+CPU, and about 4 GB of disk while building.
 
 ```sh
 git clone https://github.com/MrNorm/rekordbox-wine.git
@@ -67,7 +66,7 @@ makepkg -si
 ```
 
 The package version records the commit it was built from
-(`0.2.0.r<commits>.g<short-sha>`). To update: `git pull`, then `makepkg -si`.
+(`0.3.0.r<commits>.g<short-sha>`). To update: `git pull`, then `makepkg -si`.
 
 `paru` installs from AUR or from package *files*, not from a local PKGBUILD
 directory, so hand it the result: `paru -U rekordbox-wine-git-*.pkg.tar.zst`.
@@ -77,7 +76,8 @@ project distributes from GitHub instead.
 
 ### Debian and Fedora
 
-No prebuilt packages yet — build them, which takes the same 20–30 minutes:
+No prebuilt packages yet. Build them; like the Arch package, each compiles its
+own Wine, so no Wine from the distribution or from WineHQ is needed:
 
 ```sh
 git clone https://github.com/MrNorm/rekordbox-wine.git
@@ -86,24 +86,10 @@ packaging/build-deb.sh        # Debian/Ubuntu  -> ../rekordbox-wine_*.deb
 packaging/build-rpm.sh        # Fedora         -> ~/rpmbuild/RPMS/x86_64/*.rpm
 ```
 
-Both are built, marker-checked inside the package and installed on their own
-distributions by [`packages.yml`](.github/workflows/packages.yml) on every
-packaging change.
-
-**You need Wine from the [WineHQ repository](https://gitlab.winehq.org/wine/wine/-/wikis/Download)**,
-because the distribution's own Wine is too old for the patch series. Measured
-2026-09-02:
-
-| | own Wine | with WineHQ repo | |
-|---|---|---|---|
-| Debian trixie | 10.0 | **11.16** | works |
-| Fedora 43 | 11.0 | **11.16** | works |
-| Fedora 42 | 10.20 | 11.8 | too old |
-| Fedora 41 | 10.15 | 10.18 | too old |
-
-Install `winehq-staging` from that repository first. The launcher checks the
-version on every start and refuses rather than running against a Wine the
-components were not built for.
+The build needs a mingw-w64 cross compiler (`gcc-mingw-w64-x86-64` and
+`gcc-mingw-w64-i686`; Fedora `mingw64-gcc` and `mingw32-gcc`). Both packages are
+built, checked for every patch marker inside the package and installed on their
+own distributions by [`packages.yml`](.github/workflows/packages.yml).
 
 ## Installing rekordbox itself
 
@@ -135,9 +121,9 @@ the list is a file already on your disk.
 
 `bin/fetch-rekordbox.sh --list` shows what is available without downloading.
 
-The launcher runs on every start and repairs drift: builds its private Wine tree,
-installs the patched DLLs into the prefix, applies the audio settings PC MASTER
-OUT needs, and corrects Wine's own menu entry.
+The launcher runs on every start and repairs drift: it checks every fix in its
+Wine, removes DLL overrides older versions left in the prefix, applies the audio
+settings PC MASTER OUT needs, and corrects Wine's own menu entry.
 
 `rekordbox-wine --check` reports all of it and changes nothing.
 
@@ -157,10 +143,11 @@ Run `rekordbox-wine --check` first. It names the problem in most cases.
 
 | symptom | cause | fix |
 |---|---|---|
-| `Not launching` and a list of blockers | Wine was upgraded; the patched components are built for the old version | Rebuild — see [Wine updates](#wine-updates) |
+| `Not launching` and a list of blockers | The package is damaged, or a system library its Wine loads was removed | Reinstall the package; see [System updates](#system-updates) |
 | Starts, one frame, then frozen | Started through Wine's own menu entry, bypassing the patches | Use `rekordbox-wine`, or the entry marked *(via rekordbox-wine)* |
 | Two menu entries, one broken | Wine regenerates its entry on install | The launcher corrects it on every start |
 | Controller absent, or MIDI binds to something else | udev rule or `snd_seq_dummy` | [DDJ-400 setup](#ddj-400-setup) |
+| Controller absent after a kernel update | The running kernel's modules were deleted by the upgrade | Reboot. `kernel-modules-hook` prevents it |
 | Sample-rate list empty in Preferences | Audio driver is `winepulse`, which has no exclusive mode | `--check` reports the driver; it must be `alsa` |
 | A sound device vanishes from PipeWire mid-session | WirePlumber 0.5.15 crashes in its own ALSA error handler | `systemctl --user restart wireplumber` |
 | PC MASTER OUT stalls | `WasapiPolling` / `AudioBufferSize` | The launcher seeds both; `--check` verifies them |
@@ -182,40 +169,33 @@ warn  rekordbox 7.3.0 has not been measured by this project
 It warns and starts. Measured versions are listed in
 [`upstream/supported-rekordbox.txt`](upstream/supported-rekordbox.txt).
 
-### Wine updates
+### System updates
 
-A Wine upgrade requires a rebuild. The patched components are compiled against
-Wine's internal interfaces, which change between releases.
+**Wine updates: nothing to do.** rekordbox runs on the Wine inside this package,
+never on your system's, so `pacman -Syu` moving wine-staging changes nothing.
+Until 0.3.0 the package patched the system Wine, and every Wine upgrade broke
+rekordbox until the patches were rebuilt.
 
-The launcher **refuses to start** on a mismatch and prints the commands:
-
-```sh
-/usr/share/rekordbox-wine/bin/build-patched-dlls.sh   # 20–30 min, no root
-/usr/share/rekordbox-wine/bin/make-private-wine.sh
-```
-
-Or install a release built for your Wine, or hold Wine back:
-
-```
-# /etc/pacman.conf
-IgnorePkg = wine-staging
-```
-
-An installed package writes the rebuilt components to
-`~/.local/share/rekordbox-wine/artifacts/`, not to `/usr/share`, and the launcher
-looks there first. The package's own copies are left alone.
-
-Untested Wine versions need `RBW_ALLOW_UNTESTED_WINE=1` to build:
+**Kernel updates: reboot before DJing.** Arch deletes the running kernel's
+modules when it upgrades the kernel, so a controller plugged in before the
+reboot gets no MIDI driver. The package loads `snd_seq_midi` and `snd_usb_audio`
+at boot so they are already in memory, and
+[`kernel-modules-hook`](https://archlinux.org/packages/extra/any/kernel-modules-hook/)
+keeps the old modules until you reboot:
 
 ```sh
-RBW_ALLOW_UNTESTED_WINE=1 /usr/share/rekordbox-wine/bin/build-patched-dlls.sh
+sudo pacman -S kernel-modules-hook
 ```
 
-Tested versions are listed in
+**Library updates.** The bundled Wine still loads a few system libraries
+(GnuTLS, OpenGL, X11, FreeType). After every pacman transaction a hook checks
+they still resolve, and prints what is wrong if one does not. It is silent
+otherwise. The launcher runs the same check on every start.
+
+The Wine version inside the package is recorded in
+[`upstream/wine-runtime.conf`](upstream/wine-runtime.conf). Moving it is a
+deliberate, measured step; measured versions are in
 [`upstream/patches/supported-wine.txt`](upstream/patches/supported-wine.txt).
-
-**The two version lists behave differently.** An unlisted Wine cannot load, so
-the launcher refuses. An unlisted rekordbox is only unmeasured, so it warns.
 
 ## What works
 
@@ -243,10 +223,11 @@ Measured on wine-staging 11.15 with rekordbox 7.2.17/7.2.18. On 11.16 only
 
 ## System impact
 
-Six fixes are unix libraries and drivers that Wine cannot override per-prefix.
-Instead of overwriting files owned by your `wine` package, the launcher builds a
-private Wine tree on first run: ~16 MB of symlinks plus the six patched files.
-Other Wine applications are unaffected.
+The package installs its own Wine in `/usr/lib/rekordbox-wine/wine` (about
+1 GB). It does not use, replace or modify your system Wine, and other Wine
+applications never see the patches. It also installs a udev rule for the
+controller, a module blacklist for `snd_seq_dummy`, modules to load at boot, and
+a pacman hook that only checks.
 
 ```sh
 /usr/share/rekordbox-wine/bin/verifyloaded.sh          # what rekordbox mapped
@@ -284,10 +265,11 @@ size. Written up in
 
 ## CI
 
-- **`build.yml`** — builds the package daily and per push against Arch's current
-  wine-staging, and verifies the patch markers inside the built package.
-- **`wine-watch.yml`** — checks Arch's wine-staging version daily and opens an
-  issue when it is ahead of `supported-wine.txt`.
+- **`build.yml`** — builds the package, with its pinned Wine, per push and
+  weekly, and verifies the patch markers inside the built package.
+- **`wine-watch.yml`** — weekly; opens an issue when Arch has a newer
+  wine-staging than the pinned one. Users are not affected by that; it is a
+  prompt to consider moving the pin.
 - **`release.yml`** — publishes a package per `v*` tag, Wine version in the asset
   name.
 - **`aur.yml`** — manual dispatch, gated on a secret.
