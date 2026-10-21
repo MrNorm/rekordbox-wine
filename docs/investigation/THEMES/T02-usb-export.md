@@ -463,3 +463,73 @@ has every field it needs. Until then the entry is per-stick and its
 `PhysicalDeviceObjectName` (`\Device\Harddisk1` here) is a per-boot,
 allocation-order value, exactly as this theme warned about the archived jpf91
 `.reg`.
+
+# 2026-09-12 — EXPORTED AND READ BACK BY A REAL PLAYER (run 20260912)
+
+**wine-staging 11.16, rekordbox 7.2.18, SanDisk Ultra 30 GB FAT32 (`/dev/sda1`,
+label `DATA`).** Re-measures USB export on the 11.16 axis (T14) and satisfies the
+standing rule for this theme: a stick that a real player reads.
+
+The stick was **listed in rekordbox's export browser with no extra
+configuration**. Two things did that: 0.2.0's `mountmgr.sys` writes the volume
+devnode (marker `RBW-VOLNODE`), so the enumeration needs no hand-written
+registry entry; and the documented per-machine drive wiring was already in place
+— the stick sat on a removable letter:
+
+    ln -s /run/media/<user>/DATA  "$WINEPREFIX/dosdevices/e:"   # removable drive
+    ln -s /dev/sda1               "$WINEPREFIX/dosdevices/e::"  # raw node
+
+(`e:` = the DOS drive, `e::` = the raw node the filesystem is read from; the
+letter is arbitrary but must match the `HKLM\Software\Wine\Drives` entry, and
+that entry showing `e:` = `floppy` is expected.)
+
+One fault: **read access to the raw node.** The drive appeared in the browser
+(`E:DATA`, `runs/T02-device-listed-by-rekordbox-20260912.png`) but export was
+refused with *"USB storage device or SD card that is formatted with an unsupported file
+system."* The message is misleading: the filesystem was a clean empty FAT32, the
+raw node was unreadable. This is the first requirement of the 2026-08-19 list
+above, now measured — mountmgr opened `/dev/sda1`, failed with
+`ERROR_ACCESS_DENIED` (5), and then reported the FAT32 volume as **NTFS**:
+
+    brw-rw---- 1 root disk 8, 1  /dev/sda1      # uid 1000 not in `disk`, no ACL
+    python3: os.open('/dev/sda1', O_RDONLY) -> PermissionError [Errno 13]
+
+Granting the user read access to the node is the fix. Immediate (ephemeral):
+`sudo setfacl -m u:<uid>:r /dev/sda1 /dev/sda`. Permanent — a udev rule, numbered
+**below 73** (`73-seat-late.rules` applies the uaccess tag) and not gated on
+`ENV{ID_PORT}` (it isn't `"usb"` here):
+
+    SUBSYSTEM=="block", KERNEL=="sd*", ENV{ID_BUS}=="usb", TAG+="uaccess"
+
+The filesystem type is read from the raw node, independent of the letter — which
+is why an already-listed device still refused until read access was granted.
+
+Both halves above were in place by hand, and nothing shipped creates them: `grep
+-rn dosdevices bin/ packaging/ recipes/` finds no code, and the `e:` symlinks
+from this run are gone from the prefix now. Only the udev rule is offered for
+packaging. Automating the drive wiring is outstanding work, not a property of
+the current launcher.
+
+## The result
+
+rekordbox lists `E:DATA` and **exports a track to it; the XDJ-XZ reads the stick
+back** — in USB mode it loads the tracks with **waveforms, BPM and key on both
+decks** (`runs/T02-stick-read-back-by-xz-20260912.jpg`). Rendered waveforms, BPM
+and key are **inference** that the player parsed the `PIONEER` tree and the ANLZ
+files itself — the parsing was not observed, but there is nothing else on the
+stick for it to read. (Label `DATA`, not `REKORDBOX`; the XDJ-XZ reads it fine.)
+
+This closes two things: the 2026-08-19 *"still to prove"* gate, and the 11.16
+re-measurement gap (T14). It also answers **B2** in
+`docs/REMAINING-STEPS-TO-GOLD.md` and the README's "What is not proven" line;
+those two documents, and `docs/GOLD-STATUS.md`, are deliberately left untouched
+here and still carry the pre-T02 wording.
+
+The 2026-08-19 rule asked for a strict **native parse outside Wine before the
+stick went anywhere near hardware**. That order was inverted on 2026-09-12 — a
+real player reading the stick is the stronger evidence, and it is what was
+obtained. `bin/pdbcheck.py` remains the only structural check of `export.pdb`,
+and the strict native parse is still owed.
+
+PRO DJ LINK to the same player is a separate result — **T15**. B1 (full DDJ-400
+performance pass) remains open.
