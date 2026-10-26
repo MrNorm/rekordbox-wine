@@ -14,14 +14,17 @@ cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
 OUT="${1:-}"
 
 command -v rpmbuild >/dev/null || {
-  echo "build-rpm: rpmbuild not found. Install: sudo dnf install rpm-build rpmdevtools" >&2
+  echo "build-rpm: rpmbuild not found. Install: sudo dnf install rpm-build" >&2
   exit 1; }
 
 VER="$(awk -F'[ \t]+' '/^Version:/{print $2; exit}' packaging/rekordbox-wine.spec)"
 [[ -n "$VER" ]] || { echo "build-rpm: cannot read Version: from the spec" >&2; exit 1; }
 
-rpmdev-setuptree
-TARBALL="$HOME/rpmbuild/SOURCES/rekordbox-wine-$VER.tar.gz"
+# Use RPM's configured paths without requiring the rpmdevtools helpers.
+SOURCES="$(rpm --eval '%{_sourcedir}')"
+RPMS="$(rpm --eval '%{_rpmdir}')"
+mkdir -p "$SOURCES" "$RPMS"
+TARBALL="$SOURCES/rekordbox-wine-$VER.tar.gz"
 tar --transform "s,^\.,rekordbox-wine-$VER," \
     --exclude=.git --exclude=./runs --exclude=./prefixes --exclude=./debian --exclude=./build --exclude=./artifacts \
     -czf "$TARBALL" .
@@ -29,7 +32,7 @@ echo "source: $TARBALL"
 
 rpmbuild -bb packaging/rekordbox-wine.spec
 
-FOUND="$(find "$HOME/rpmbuild/RPMS" -name "rekordbox-wine-$VER*.rpm" | head -1)"
+FOUND="$(find "$RPMS" -name "rekordbox-wine-$VER*.rpm" | head -1)"
 if [[ -n "$OUT" && -n "$FOUND" ]]; then
   mkdir -p "$OUT"; cp -f "$FOUND" "$OUT/"; FOUND="$OUT/$(basename "$FOUND")"
 fi

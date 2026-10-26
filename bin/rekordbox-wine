@@ -253,6 +253,8 @@ check_runtime_file() {   # path under lib/wine, marker, what breaks without it
 }
 check_runtime_file x86_64-windows/dxgi.dll RBW-PATCH \
   "IDXGIOutput::WaitForVBlank is missing, so the window paints one frame and freezes (T01)"
+check_runtime_file x86_64-windows/dwrite.dll RBW-DWRITE \
+  "text-source refresh can dereference a null pointer and leave the library browser black"
 check_runtime_file x86_64-windows/mmdevapi.dll RBW-MMDEV \
   "no event-driven exclusive-mode audio, so the sample-rate list is empty (T03)"
 check_runtime_file x86_64-windows/setupapi.dll PhysicalDeviceObjectName \

@@ -1355,3 +1355,38 @@ T19: user chose to vendor Wine. Package now builds wine 11.18 + staging 11.18 + 
 _last run: `20261017T1707-pkg-installed-rb7`_
 
 Installed 0.3.0 with system Wine (wine-staging/mono/gecko/winetricks) and the old package removed. 20261017T1707-pkg-installed-rb7: window-ok on real rb7, 0 maps from /usr/lib/wine. Found T21: a new prefix then prompts to download Wine Mono; fixed by shipping Mono 11.3.0 + Gecko 2.47.4 MSIs in the runtime (sha256 = Wine's own pins). Rebuilt 0.3.0.r295 (325 MB), installed: fresh prefix with empty cache, no prompt; Gecko installs on demand silently. Next: publish, PR, CI, v0.3.0.
+
+### 2026-10-26 — black library browser after relocation crash (Fedora 44)
+
+rekordbox 7.2.19 on the packaged Wine 11.18-staging, 192 DPI. The user reported
+that relocating tracks crashed the application; subsequent starts rendered the
+player but left the entire library browser black. WM_NULL succeeded and the
+running process mapped our patched runtime. Repaint and resize did not recover
+it. Resetting only BrowseLayout in browseSetting.xml did not help; the original
+layout was restored before the successful run.
+
+A startup trace caught c0000005 in dwrite.dll at RVA 0x49614:
+text_source_get_u32_char+0x44 dereferenced a null refreshed text pointer.
+Wine's user_callback_handler swallowed the exception, aborting browser setup
+without terminating the process. Added 0011-dwrite-text-source-end.patch: stop
+iteration if refreshing the last code unit fails or yields no readable text.
+The RBW-DWRITE marker is checked in the package, launcher and live-process probe.
+
+upstream/probes/dwrite-eof-test.c exercises normal text and sources that end or
+fail while refreshing a chunk. Both exceptional cases reproduce an access
+violation with the original DLL (exit 86); all three pass with the fix, mapping
+two normal characters or the one supported character before end/error.
+Built only x86_64 dwrite.dll from the checksum-verified pinned Wine 11.18 source.
+Applied it locally as a native DLL in the rekordbox prefix, with an override
+scoped to AppDefaults\\rekordbox.exe\\DllOverrides. Verified the loaded file in
+/proc/maps. The browser rendered the existing collection again and
+the user confirmed recovery. 192 DPI remains enabled. No database restoration,
+track reimport, or database editing was used.
+
+Settings, the closed library, and the original dwrite.dll were backed up before
+applying the local fix. That DLL is an interim fix for this Wine version:
+after installing a rebuilt runtime containing
+RBW-DWRITE, remove the app-specific dwrite override so future runtime updates
+supply the DLL. The full runtime/RPM has not been rebuilt in this recovery.
+The original relocation crash was not reproduced; this establishes the cause
+of the persistent black browser, not every possible relocation failure.

@@ -1,0 +1,37 @@
+Subject: [PATCH] dwrite: stop reading when a refreshed text source ends
+
+Refreshing the final code unit can return a failed HRESULT, a null text
+pointer or an empty chunk. text_source_get_u32_char() currently dereferences
+that result even though text_source_read_more() can mark the context ended.
+
+Stop iteration before dereferencing the refreshed chunk. This prevents the
+DirectWrite exception observed during rekordbox 7.2.19 browser initialization
+on Wine 11.18: text_source_get_u32_char+0x44 read through a null pointer,
+Wine swallowed the window callback exception, and the library pane remained
+black while the rest of the window still responded.
+
+upstream/probes/dwrite-eof-test.c exercises normal text, end-of-text on a
+refresh, and a failed refresh. The latter two crash the unpatched DLL and
+return the supported one-character prefix with this change.
+
+---
+--- a/dlls/dwrite/analyzer.c
++++ b/dlls/dwrite/analyzer.c
+@@ -436,8 +436,16 @@
+     const WCHAR *text;
+     UINT32 available;
+
+-    /* Make sure to have full pair of surrogates */
++    /* Make sure to have full pair of surrogates. The source may return
++     * an error or end-of-text when refreshing the final code unit. */
+     text_source_read_more(context);
++    if (context->end || !context->text || context->cursor >= context->chunk_length)
++    {
++        WARN("RBW-DWRITE: text source ended while refreshing a chunk.\n");
++        context->end = TRUE;
++        context->ch = 0;
++        return;
++    }
+
+     available = context->chunk_length - context->cursor;
+     text = context->text + context->cursor;

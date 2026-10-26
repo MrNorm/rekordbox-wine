@@ -24,6 +24,7 @@ declare -A WANT=(
   [winealsa.so]=RBW-EVENT [winex11.so]=RBW-POPUP
   [mountmgr.so]=RBW-REMOVABLE [wineusb.so]=RBW-USBHCD
   [dxgi.dll]=RBW-PATCH [mmdevapi.dll]=RBW-MMDEV
+  [dwrite.dll]=RBW-DWRITE
   [setupapi.dll]=PhysicalDeviceObjectName
 )
 echo "process $PID  ($(tr '\0' ' ' < /proc/$PID/cmdline | cut -c1-60))"

@@ -32,6 +32,7 @@ need() {   # <path under lib/wine> <marker>
 
 [[ -x "$RT/bin/wine" ]] || { echo "  MISSING   $RUNTIME_PREFIX/bin/wine"; fail=1; }
 need x86_64-windows/dxgi.dll       RBW-PATCH                  # T01 WaitForVBlank
+need x86_64-windows/dwrite.dll     RBW-DWRITE                 # text-source refresh / black browser
 need x86_64-windows/mmdevapi.dll   RBW-MMDEV                  # T03 exclusive events
 need x86_64-windows/setupapi.dll   PhysicalDeviceObjectName   # T02 volume matching
 need x86_64-windows/mountmgr.sys   RBW-BUSTYPE                # T02
